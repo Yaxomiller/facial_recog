@@ -1,6 +1,6 @@
 import sys
 
-from src.attendance import build_parser, launch_offline_native_react_app
+from src.attendance import build_parser, launch_default_app
 
 
 def main() -> None:
@@ -8,7 +8,7 @@ def main() -> None:
         parser = build_parser()
         args = parser.parse_args()
         if getattr(args, "command", None) is None:
-            launch_offline_native_react_app()
+            launch_default_app()
             return
 
         args.handler(args)

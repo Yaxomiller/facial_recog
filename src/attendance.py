@@ -53,12 +53,17 @@ def _launch_legacy_tk_app() -> None:
             ) from exc
         raise
 
+
 def launch_lightweight_native_app() -> None:
     launch_native_react_app()
 
 
 def launch_offline_native_react_app() -> None:
     launch_native_react_app()
+
+
+def launch_default_app() -> None:
+    launch_web_app(browser_mode="web")
 
 
 def handle_native(_: argparse.Namespace) -> None:

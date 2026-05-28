@@ -132,15 +132,15 @@ ATTENDANCE_CORS_ALLOW_ORIGINS=http://localhost:5173,http://<device-ip>:5173
 
 ### Lightweight Offline App
 
-The default app is now the same operator-facing React/FastAPI UI running inside a lightweight native Python webview shell. It does not need Electron, Tauri, Rust, or Visual Studio build tools.
+The default app now starts the operator-facing React/FastAPI UI in the normal system browser so it can run on devices like the Radxa without relying on the native Python webview runtime.
 
-Start the offline app:
+Start the browser app:
 
 ```bash
 python app.py
 ```
 
-Equivalent explicit commands:
+If you still want the embedded native shell and the machine has `pywebview` plus the required system runtime installed, use one of these explicit commands:
 
 ```bash
 python app.py offline
@@ -156,24 +156,24 @@ Install Python dependencies:
 pip install -r requirements.txt
 ```
 
-Radxa / Debian packages for the native webview shell:
+Radxa / Debian packages for the optional native webview shell:
 
 ```bash
 sudo apt install python3-gi gir1.2-webkit2-4.1 libwebkit2gtk-4.1-0
 ```
 
-The offline app also needs a graphical desktop/X11 session to open its native window.
+The native shell also needs a graphical desktop/X11 session to open its own window.
+
+If you want the browser-hosted version explicitly, use:
+
+```bash
+python app.py web
+```
 
 If you want the older Tkinter admin app, use:
 
 ```bash
 python app.py gui
-```
-
-If you still want the browser-hosted version for development or remote access, use:
-
-```bash
-python app.py web
 ```
 
 ### Example V2 Endpoints
@@ -336,7 +336,7 @@ pip install -r requirements.txt
 
 ## Run
 
-Launch the local React app in lightweight browser app mode:
+Launch the local React app in the system browser:
 
 ```bash
 python app.py
@@ -353,19 +353,19 @@ npm run build
 After that, copy the repo with the built `frontend/dist` folder to the Radxa and start the same UI locally:
 
 ```bash
+python app.py
+```
+
+If you want Chromium or Edge to open it in app-style kiosk mode without browser tabs, use:
+
+```bash
 python app.py kiosk
 ```
 
-or:
+If you still want the embedded native shell on a machine where `pywebview` works, use:
 
 ```bash
 python app.py desktop
-```
-
-Launch the same React UI in the normal system browser:
-
-```bash
-python app.py web
 ```
 
 Launch the legacy desktop Tkinter app:
@@ -376,12 +376,13 @@ python app.py gui
 
 Notes:
 - This path keeps the same React UI but removes the Rust/Tauri dependency chain from the device.
-- On Linux and Radxa, install a Chromium-based browser once and the app will open in app mode with no browser tabs.
-- The local UI starts the FastAPI backend on `127.0.0.1:8000`, so Wi-Fi is not required.
+- On Linux and Radxa, installing a Chromium-based browser is enough for the default `python app.py` flow.
+- Use `python app.py kiosk` if you want the browser to open in app mode with no browser tabs.
+- The local UI starts the FastAPI backend on `0.0.0.0:8000` by default, so it can also be opened from another device on the same network.
 - If the device does not have npm, the launcher will still run as long as `frontend/dist` is already present.
 - Set `ATTENDANCE_SKIP_FRONTEND_BUILD=true` if you always want to skip auto-build checks on the device.
 - Set `ATTENDANCE_DATA_DIR` if you want the app to store attendance data somewhere other than the default app or project data folder.
-- `python app.py web` is still available if you intentionally want browser mode.
+- `python app.py web` is still available if you want the explicit browser command.
 
 ## CLI Commands
 
