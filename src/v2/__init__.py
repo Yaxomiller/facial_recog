@@ -1,0 +1,2 @@
+"""Scalable attendance service package."""
+

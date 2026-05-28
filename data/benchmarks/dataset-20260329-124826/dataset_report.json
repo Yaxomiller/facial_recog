@@ -1,0 +1,99 @@
+{
+  "dataset_root": "data\\synthetic_dataset",
+  "people_enrolled": 100,
+  "enroll_images": 297,
+  "test_images": 484,
+  "detected_faces": 484,
+  "detection_rate": 1.0,
+  "correct_matches": 0,
+  "false_rejects": 484,
+  "misidentifications": 0,
+  "accuracy": 0.0,
+  "avg_detect_ms": 7.924,
+  "avg_recognize_ms": 12.639,
+  "p95_recognize_ms": 21.001,
+  "active_detector": "mediapipe",
+  "active_embedder": "classical",
+  "active_index": "lsh",
+  "output_file": "data\\benchmarks\\dataset-20260329-124826\\dataset_report.json",
+  "sample_failures": [
+    {
+      "expected": "synthetic 001",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_001\\04.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 001",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_001\\05.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 001",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_001\\06.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 001",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_001\\07.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 001",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_001\\08.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 002",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_002\\04.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 002",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_002\\05.jpg",
+      "reason": "Rejected: top candidates are too close to each other."
+    },
+    {
+      "expected": "synthetic 002",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_002\\06.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 002",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_002\\07.jpg",
+      "reason": "Rejected: top candidates are too close to each other."
+    },
+    {
+      "expected": "synthetic 002",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_002\\08.jpg",
+      "reason": "Rejected: face crop is too small, blurry, or poorly lit."
+    },
+    {
+      "expected": "synthetic 003",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_003\\04.jpg",
+      "reason": "Rejected: top candidates are too close to each other."
+    },
+    {
+      "expected": "synthetic 003",
+      "predicted": "unknown",
+      "file": "data\\synthetic_dataset\\synthetic_003\\05.jpg",
+      "reason": "Rejected: top candidates are too close to each other."
+    },
+    {
+      "expected": "benchmark",
+      "predicted": "skipped",
+      "file": "1 people",
+      "reason": "Some synthetic identities did not have enough detectable images for enrollment and testing."
+    }
+  ]
+}

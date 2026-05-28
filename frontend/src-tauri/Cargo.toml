@@ -1,0 +1,13 @@
+[package]
+name = "tresenso-face-attendance"
+version = "1.0.0"
+description = "Offline React desktop shell for Tresenso face attendance"
+authors = ["Tresenso Tech Pvt Ltd"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

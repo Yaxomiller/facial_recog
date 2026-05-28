@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tresenso Face Attendance",
+  "version": "1.0.0",
+  "identifier": "com.tresenso.faceattendance",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run desktop:prepare && npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tresenso Face Attendance",
+        "width": 430,
+        "height": 932,
+        "minWidth": 390,
+        "minHeight": 780,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "backend-runtime/": "backend-runtime/"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "workers_indexed": 10000,
+  "probes": 500,
+  "vector_dimension": 304,
+  "avg_search_ms": 0.276,
+  "p95_search_ms": 0.56,
+  "max_search_ms": 16.055199987022206,
+  "active_embedder": "classical",
+  "active_index": "lsh",
+  "output_file": "data\\benchmarks\\load-20260329-125034\\load_report.json"
+}
