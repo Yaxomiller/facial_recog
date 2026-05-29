@@ -74,6 +74,7 @@ class BreathTestResult(BaseModel):
     employee_code: str
     name: str
     matched_score: float
+    raw_sensor_value: float | None = None
     alcohol_ppb: float
     cannabis_ppb: float
     alcohol_clear: bool
@@ -83,6 +84,19 @@ class BreathTestResult(BaseModel):
     created_at: datetime
 
 
+class BreathTestSessionStartResult(BaseModel):
+    session_id: str
+    worker_id: int
+    camera_id: str
+    sample_seconds: float
+    started_at: datetime
+
+
+class BreathTestSessionCancelResult(BaseModel):
+    session_id: str
+    canceled: bool
+
+
 class AttendanceRow(BaseModel):
     id: int
     worker_id: int
@@ -90,6 +104,7 @@ class AttendanceRow(BaseModel):
     name: str
     camera_id: str
     matched_score: float
+    raw_sensor_value: float | None = None
     alcohol_ppb: float
     cannabis_ppb: float
     alcohol_clear: bool

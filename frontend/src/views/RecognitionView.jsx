@@ -32,6 +32,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   const exhalingRef = useRef(false);
   const identifiedMatchRef = useRef(null);
   const exhaleCancelledRef = useRef(false);
+  const breathSessionRef = useRef(null);
   const stableSingleFaceFramesRef = useRef(0);
   const lastRecognitionAttemptRef = useRef(0);
 
@@ -46,6 +47,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   useEffect(() => () => {
     clearExhaleTimer();
     clearExhaleCheckTimer();
+    void cancelActiveBreathSession();
     stopLive(timerRef, streamRef, videoRef);
   }, []);
 
@@ -140,6 +142,20 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   function setExhaleState(value) {
     exhalingRef.current = value;
     setExhaling(value);
+  }
+
+  async function cancelActiveBreathSession() {
+    const sessionId = breathSessionRef.current;
+    if (!sessionId) {
+      return;
+    }
+
+    breathSessionRef.current = null;
+    try {
+      await apiClient.cancelBreathTestSession(token, sessionId);
+    } catch (_requestError) {
+      // Ignore cancellation errors here because we are already unwinding the UI state.
+    }
   }
 
   function startScanLoop() {
@@ -242,6 +258,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   }
 
   function restartScanningAfterFaceMismatch(reason) {
+    void cancelActiveBreathSession();
     exhaleCancelledRef.current = true;
     clearExhaleTimer();
     clearExhaleCheckTimer();
@@ -363,10 +380,29 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
       return;
     }
 
+    let breathSession = null;
+    try {
+      breathSession = await apiClient.startBreathTestSession(token, {
+        worker_id: matchToVerify.worker_id,
+        camera_id: CAMERA_ID,
+      });
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        onSessionExpired("Session expired before the breath test started. Please log in again.");
+        handleStop();
+        return;
+      }
+      const text = requestError instanceof Error ? requestError.message : "Breath test could not be started.";
+      setMessage(text);
+      return;
+    }
+
+    breathSessionRef.current = breathSession.session_id;
+    const breathSeconds = Math.max(1, Math.ceil(Number(breathSession.sample_seconds) || EXHALE_SECONDS));
     exhaleCancelledRef.current = false;
     setBreathResult(null);
     setExhaleState(true);
-    setCountdown(EXHALE_SECONDS);
+    setCountdown(breathSeconds);
     clearRecognitionFailure();
     setMessage("Exhale now. Keep your face in view until the timer finishes.");
 
@@ -374,7 +410,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
       void verifyExhaleIdentity(identifiedMatchRef.current || matchToVerify);
     }, EXHALE_FACE_CHECK_INTERVAL_MS);
 
-    let remaining = EXHALE_SECONDS;
+    let remaining = breathSeconds;
     exhaleTimerRef.current = window.setInterval(async () => {
       remaining -= 1;
       if (remaining > 0) {
@@ -398,11 +434,17 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
           return;
         }
 
-        const result = await apiClient.runBreathTest(token, {
-          worker_id: verifiedMatch.worker_id,
-          camera_id: CAMERA_ID,
+        const sessionId = breathSessionRef.current;
+        if (!sessionId) {
+          setMessage("The breath test session was lost before the result could be stored.");
+          return;
+        }
+
+        const result = await apiClient.completeBreathTestSession(token, {
+          session_id: sessionId,
           matched_score: verifiedMatch.score,
         });
+        breathSessionRef.current = null;
         setBreathResult(result);
         if (!result.overall_clear) {
           const failures = [
@@ -421,6 +463,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
           onSessionExpired("Session expired during the breath test. Please log in again.");
           return;
         }
+        await cancelActiveBreathSession();
         const text = requestError instanceof Error ? requestError.message : "Breath test failed.";
         setMessage(text);
       } finally {
@@ -438,6 +481,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   function handleStop() {
     clearExhaleTimer();
     clearExhaleCheckTimer();
+    void cancelActiveBreathSession();
     exhaleCancelledRef.current = true;
     resetScanProgress();
     stopLive(timerRef, streamRef, videoRef);

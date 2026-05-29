@@ -1,6 +1,10 @@
 from collections import defaultdict
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from threading import Lock
+from typing import Any
+from uuid import uuid4
 
 import cv2
 import numpy as np
@@ -51,6 +55,8 @@ from src.v2.index import resolve_index
 from src.v2.schemas import (
     ArchitectureNote,
     AttendanceRow,
+    BreathTestSessionCancelResult,
+    BreathTestSessionStartResult,
     BreathTestResult,
     CandidateDebug,
     DeleteAttendanceResult,
@@ -87,6 +93,18 @@ class WorkerProfile:
 
 
 @dataclass
+class PendingBreathSession:
+    session_id: str
+    worker_id: int
+    camera_id: str
+    started_at: datetime
+    sample_seconds: float
+    future: Future
+    canceled: bool = False
+    completed: bool = False
+
+
+@dataclass
 class DescriptorConsensus:
     worker_id: int | None
     best_score: float
@@ -106,6 +124,10 @@ class ScalableAttendanceService:
         self.warnings = embedder_warnings + index_warnings
         self.recognition_cache = RecognitionCache(ttl_seconds=RECOGNITION_CACHE_TTL_SECONDS)
         self.breath_analyzer = resolve_breath_analyzer()
+        self.warnings.extend(getattr(self.breath_analyzer, "startup_warnings", ()))
+        self.breath_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="breath-analyzer")
+        self.breath_session_lock = Lock()
+        self.breath_sessions: dict[str, PendingBreathSession] = {}
         self.lbph_recognizer: cv2.face_LBPHFaceRecognizer | None = None
         self.lbph_label_to_worker_id: dict[int, int] = {}
         self.worker_profiles: dict[int, WorkerProfile] = {}
@@ -817,6 +839,130 @@ class ScalableAttendanceService:
             detector_backend=detector_backend_name(),
         )
 
+    def _prune_breath_sessions_locked(self) -> None:
+        stale_session_ids = [
+            session_id
+            for session_id, session in self.breath_sessions.items()
+            if session.completed or (session.canceled and session.future.done())
+        ]
+        for session_id in stale_session_ids:
+            del self.breath_sessions[session_id]
+
+    def _active_breath_session_locked(self) -> PendingBreathSession | None:
+        for session in self.breath_sessions.values():
+            if not session.future.done():
+                return session
+            if not session.completed and not session.canceled:
+                return session
+        return None
+
+    def _breath_test_result_from_event(
+        self,
+        worker: Any,
+        matched_score: float,
+        event: Any,
+    ) -> BreathTestResult:
+        return BreathTestResult(
+            worker_id=int(worker["id"]),
+            employee_code=worker["employee_code"],
+            name=worker["name"],
+            matched_score=matched_score,
+            raw_sensor_value=None if event["raw_sensor_value"] is None else float(event["raw_sensor_value"]),
+            alcohol_ppb=float(event["alcohol_ppb"]),
+            cannabis_ppb=float(event["cannabis_ppb"]),
+            alcohol_clear=bool(event["alcohol_clear"]),
+            cannabis_clear=bool(event["cannabis_clear"]),
+            overall_clear=bool(event["alcohol_clear"]) and bool(event["cannabis_clear"]),
+            attendance_marked=bool(event["attendance_marked"]),
+            created_at=event["created_at"],
+        )
+
+    def start_breath_test(self, worker_id: int, camera_id: str) -> BreathTestSessionStartResult:
+        worker = repository.fetch_worker(worker_id)
+        if worker is None:
+            raise RuntimeError(f"No worker found for id '{worker_id}'.")
+
+        with self.breath_session_lock:
+            self._prune_breath_sessions_locked()
+            active_session = self._active_breath_session_locked()
+            if active_session is not None:
+                raise RuntimeError("A breath test is already active on this device. Finish or cancel it before starting another.")
+
+            session_id = uuid4().hex
+            started_at = datetime.utcnow()
+            future = self.breath_executor.submit(
+                self.breath_analyzer.read,
+                worker_id=worker_id,
+                camera_id=camera_id,
+            )
+            session = PendingBreathSession(
+                session_id=session_id,
+                worker_id=worker_id,
+                camera_id=camera_id,
+                started_at=started_at,
+                sample_seconds=max(0.0, float(getattr(self.breath_analyzer, "sample_seconds", 0.0))),
+                future=future,
+            )
+            self.breath_sessions[session_id] = session
+
+        return BreathTestSessionStartResult(
+            session_id=session_id,
+            worker_id=worker_id,
+            camera_id=camera_id,
+            sample_seconds=max(1.0, session.sample_seconds),
+            started_at=started_at,
+        )
+
+    def complete_breath_test(self, session_id: str, matched_score: float) -> BreathTestResult:
+        with self.breath_session_lock:
+            session = self.breath_sessions.get(session_id)
+        if session is None:
+            raise RuntimeError("The requested breath test session was not found.")
+        if session.canceled:
+            raise RuntimeError("The breath test session was canceled before completion.")
+
+        worker = repository.fetch_worker(session.worker_id)
+        if worker is None:
+            raise RuntimeError(f"No worker found for id '{session.worker_id}'.")
+
+        try:
+            reading = session.future.result(timeout=max(5.0, session.sample_seconds + 5.0))
+        except FutureTimeoutError as exc:
+            raise RuntimeError("The breath sensor is still processing this exhale. Please wait a moment and try again.") from exc
+        except Exception as exc:
+            with self.breath_session_lock:
+                session.completed = True
+                self._prune_breath_sessions_locked()
+            raise RuntimeError(str(exc)) from exc
+
+        event = repository.record_screening_event(
+            worker_id=session.worker_id,
+            camera_id=session.camera_id,
+            matched_score=matched_score,
+            raw_sensor_value=reading.raw_sensor_value,
+            alcohol_ppb=reading.alcohol_ppb,
+            cannabis_ppb=reading.cannabis_ppb,
+            alcohol_clear=reading.alcohol_clear,
+            cannabis_clear=reading.cannabis_clear,
+        )
+        with self.breath_session_lock:
+            session.completed = True
+            self._prune_breath_sessions_locked()
+        return self._breath_test_result_from_event(worker=worker, matched_score=matched_score, event=event)
+
+    def cancel_breath_test(self, session_id: str) -> BreathTestSessionCancelResult:
+        with self.breath_session_lock:
+            session = self.breath_sessions.get(session_id)
+            if session is None:
+                raise RuntimeError("The requested breath test session was not found.")
+
+            session.canceled = True
+            session.future.cancel()
+            if session.future.done():
+                self._prune_breath_sessions_locked()
+
+        return BreathTestSessionCancelResult(session_id=session_id, canceled=True)
+
     def screen_worker(self, worker_id: int, camera_id: str, matched_score: float) -> BreathTestResult:
         worker = repository.fetch_worker(worker_id)
         if worker is None:
@@ -827,24 +973,13 @@ class ScalableAttendanceService:
             worker_id=worker_id,
             camera_id=camera_id,
             matched_score=matched_score,
+            raw_sensor_value=reading.raw_sensor_value,
             alcohol_ppb=reading.alcohol_ppb,
             cannabis_ppb=reading.cannabis_ppb,
             alcohol_clear=reading.alcohol_clear,
             cannabis_clear=reading.cannabis_clear,
         )
-        return BreathTestResult(
-            worker_id=worker_id,
-            employee_code=worker["employee_code"],
-            name=worker["name"],
-            matched_score=matched_score,
-            alcohol_ppb=float(event["alcohol_ppb"]),
-            cannabis_ppb=float(event["cannabis_ppb"]),
-            alcohol_clear=bool(event["alcohol_clear"]),
-            cannabis_clear=bool(event["cannabis_clear"]),
-            overall_clear=bool(event["alcohol_clear"]) and bool(event["cannabis_clear"]),
-            attendance_marked=bool(event["attendance_marked"]),
-            created_at=event["created_at"],
-        )
+        return self._breath_test_result_from_event(worker=worker, matched_score=matched_score, event=event)
 
     def delete_worker(self, employee_code: str) -> DeleteWorkerResult:
         worker = repository.delete_worker_by_employee_code(employee_code)

@@ -238,4 +238,24 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
   },
+  startBreathTestSession(token, payload) {
+    return request("/api/v2/breath-tests/start", {
+      method: "POST",
+      headers: buildHeaders(token, { "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+  },
+  completeBreathTestSession(token, payload) {
+    return request("/api/v2/breath-tests/complete", {
+      method: "POST",
+      headers: buildHeaders(token, { "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+  },
+  cancelBreathTestSession(token, sessionId) {
+    return request(`/api/v2/breath-tests/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+      headers: buildHeaders(token),
+    });
+  },
 };

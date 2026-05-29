@@ -25,18 +25,21 @@ class BreathScreeningRepositoryTests(unittest.TestCase):
             worker_id=self.worker_id,
             camera_id="gate-1",
             matched_score=0.91,
+            raw_sensor_value=812.0,
             alcohol_ppb=58.0,
             cannabis_ppb=0.0,
             alcohol_clear=False,
             cannabis_clear=True,
         )
 
+        self.assertEqual(float(event["raw_sensor_value"]), 812.0)
         self.assertEqual(float(event["alcohol_ppb"]), 58.0)
         self.assertEqual(float(event["cannabis_ppb"]), 0.0)
         self.assertEqual(int(event["attendance_marked"]), 0)
 
         history = scalable_repo.list_attendance(limit=10)
         self.assertEqual(len(history), 1)
+        self.assertEqual(float(history[0]["raw_sensor_value"]), 812.0)
         self.assertEqual(int(history[0]["alcohol_clear"]), 0)
         self.assertEqual(int(history[0]["cannabis_clear"]), 1)
         self.assertEqual(int(history[0]["attendance_marked"]), 0)
@@ -46,6 +49,7 @@ class BreathScreeningRepositoryTests(unittest.TestCase):
             worker_id=self.worker_id,
             camera_id="gate-1",
             matched_score=0.95,
+            raw_sensor_value=125.0,
             alcohol_ppb=0.0,
             cannabis_ppb=0.0,
             alcohol_clear=True,
@@ -55,6 +59,7 @@ class BreathScreeningRepositoryTests(unittest.TestCase):
             worker_id=self.worker_id,
             camera_id="gate-1",
             matched_score=0.95,
+            raw_sensor_value=130.0,
             alcohol_ppb=0.0,
             cannabis_ppb=0.0,
             alcohol_clear=True,

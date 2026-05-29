@@ -34,6 +34,8 @@ from src.v2.config import (
 from src.v2.schemas import (
     ArchitectureNote,
     AttendanceRow,
+    BreathTestSessionCancelResult,
+    BreathTestSessionStartResult,
     BreathTestResult,
     DeleteAttendanceResult,
     DeleteWorkerResult,
@@ -144,6 +146,16 @@ class ResetCredentialsRequest(BaseModel):
 class BreathTestRequest(BaseModel):
     worker_id: int
     camera_id: str
+    matched_score: float
+
+
+class BreathTestStartRequest(BaseModel):
+    worker_id: int
+    camera_id: str
+
+
+class BreathTestCompleteRequest(BaseModel):
+    session_id: str
     matched_score: float
 
 
@@ -419,6 +431,42 @@ def run_breath_test(payload: BreathTestRequest, _: SessionState = Depends(requir
             camera_id=payload.camera_id,
             matched_score=payload.matched_score,
         )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v2/breath-tests/start", response_model=BreathTestSessionStartResult)
+def start_breath_test(
+    payload: BreathTestStartRequest,
+    _: SessionState = Depends(require_auth),
+) -> BreathTestSessionStartResult:
+    try:
+        return service.start_breath_test(
+            worker_id=payload.worker_id,
+            camera_id=payload.camera_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v2/breath-tests/complete", response_model=BreathTestResult)
+def complete_breath_test(
+    payload: BreathTestCompleteRequest,
+    _: SessionState = Depends(require_auth),
+) -> BreathTestResult:
+    try:
+        return service.complete_breath_test(
+            session_id=payload.session_id,
+            matched_score=payload.matched_score,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/v2/breath-tests/{session_id}", response_model=BreathTestSessionCancelResult)
+def cancel_breath_test(session_id: str, _: SessionState = Depends(require_auth)) -> BreathTestSessionCancelResult:
+    try:
+        return service.cancel_breath_test(session_id=session_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -85,6 +85,8 @@ def _ensure_attendance_columns(connection: sqlite3.Connection) -> None:
     existing_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(attendance_events)").fetchall()
     }
+    if "raw_sensor_value" not in existing_columns:
+        connection.execute("ALTER TABLE attendance_events ADD COLUMN raw_sensor_value REAL")
     if "alcohol_ppb" not in existing_columns:
         connection.execute("ALTER TABLE attendance_events ADD COLUMN alcohol_ppb REAL NOT NULL DEFAULT 0")
     if "cannabis_ppb" not in existing_columns:
@@ -324,6 +326,7 @@ def record_screening_event(
     cannabis_ppb: float,
     alcohol_clear: bool,
     cannabis_clear: bool,
+    raw_sensor_value: float | None = None,
 ) -> sqlite3.Row:
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=ATTENDANCE_COOLDOWN_HOURS)).isoformat(timespec="seconds")
@@ -351,6 +354,7 @@ def record_screening_event(
                 worker_id,
                 camera_id,
                 matched_score,
+                raw_sensor_value,
                 alcohol_ppb,
                 cannabis_ppb,
                 alcohol_clear,
@@ -358,12 +362,13 @@ def record_screening_event(
                 attendance_marked,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 worker_id,
                 camera_id,
                 matched_score,
+                None if raw_sensor_value is None else float(raw_sensor_value),
                 float(alcohol_ppb),
                 float(cannabis_ppb),
                 int(alcohol_clear),
@@ -387,6 +392,7 @@ def list_attendance(limit: int = 100) -> list[sqlite3.Row]:
             """
             SELECT attendance_events.id, attendance_events.worker_id, workers.employee_code, workers.name,
                    attendance_events.camera_id, attendance_events.matched_score,
+                   attendance_events.raw_sensor_value,
                    attendance_events.alcohol_ppb, attendance_events.cannabis_ppb,
                    attendance_events.alcohol_clear, attendance_events.cannabis_clear,
                    attendance_events.attendance_marked, attendance_events.created_at

@@ -183,8 +183,58 @@ python app.py gui
 - `GET /api/v2/workers`
 - `POST /api/v2/workers/enroll`
 - `POST /api/v2/recognitions`
+- `POST /api/v2/breath-tests/start`
+- `POST /api/v2/breath-tests/complete`
+- `DELETE /api/v2/breath-tests/{session_id}`
 - `GET /api/v2/attendance`
 - `POST /api/v2/index/rebuild`
+
+### Live Breath Sensor Integration
+
+The recognition screen now supports a live SPI/GPIO breath board flow:
+
+- face is identified first
+- pressing `Exhale` starts a backend breath-test session
+- the UI keeps the same face-verification countdown running while the sensor capture is in progress
+- when the countdown finishes, the cannabis reading plus the alcohol result are stored in `attendance_events` and shown in the UI
+
+To enable the real sensor on the Radxa/Linux device:
+
+```bash
+pip install python-periphery
+```
+
+```bash
+ATTENDANCE_BREATH_ANALYZER_MODE=spi
+ATTENDANCE_BREATH_SPI_DEVICE=/dev/spidev1.0
+ATTENDANCE_BREATH_BOARD_ENABLE_GPIO=257
+ATTENDANCE_BREATH_SAMPLE_SECONDS=10
+ATTENDANCE_BREATH_SAMPLE_INTERVAL_SECONDS=0.05
+ATTENDANCE_BREATH_ADC_BITS=16
+ATTENDANCE_BREATH_ADC_VREF=2.5
+ATTENDANCE_BREATH_ADC_GAIN=2.0
+ATTENDANCE_BREATH_ADC_TO_CANNABIS_SCALE=1.0
+ATTENDANCE_BREATH_ADC_TO_CANNABIS_OFFSET=0.0
+ATTENDANCE_BREATH_ALCOHOL_SOURCE=mock
+ATTENDANCE_BREATH_PLACEHOLDER_ALCOHOL_MIN_PPB=0
+ATTENDANCE_BREATH_PLACEHOLDER_ALCOHOL_MAX_PPB=10
+```
+
+Optional calibration controls:
+
+- the live cannabis path now follows the board script formula `adc * (vref / (2^bits * gain))`
+- `ATTENDANCE_BREATH_ADC_BITS`, `ATTENDANCE_BREATH_ADC_VREF`, and `ATTENDANCE_BREATH_ADC_GAIN` control that conversion
+- `ATTENDANCE_BREATH_ADC_TO_CANNABIS_SCALE` and `ATTENDANCE_BREATH_ADC_TO_CANNABIS_OFFSET` can still be used as a final calibration step after the board conversion
+- `ATTENDANCE_BREATH_CANNABIS_THRESHOLD_PPB` should be recalibrated to match the new converted cannabis range on your board
+- `ATTENDANCE_BREATH_SAMPLE_AGGREGATION` can be `mean`, `peak`, or `last`
+- `ATTENDANCE_BREATH_POWER_SETTLE_SECONDS`, `ATTENDANCE_BREATH_PID_SETTLE_SECONDS`, and `ATTENDANCE_BREATH_ADC_SETTLE_SECONDS` match the board timing values from the electronics script
+- `ATTENDANCE_BREATH_ADC_BASELINE`, `ATTENDANCE_BREATH_ADC_TO_ALCOHOL_SCALE`, and `ATTENDANCE_BREATH_ADC_TO_ALCOHOL_OFFSET` only apply to the temporary legacy ADC-based alcohol fallback
+- if you later wire a real alcohol script, replace the placeholder alcohol path instead of reusing the cannabis conversion
+
+Note:
+
+- the current integration converts the live SPI ADC into the cannabis reading before it enters the app flow
+- alcohol is currently a placeholder value so the app and database can still show/store both fields until the real alcohol script is added
 
 ### Benchmarking
 
