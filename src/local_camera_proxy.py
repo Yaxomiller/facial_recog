@@ -1,24 +1,27 @@
 from __future__ import annotations
 
 import os
+import socket
 import threading
 import time
+from urllib.request import Request, urlopen
 
-import cv2
-
-from src.camera import CameraStream, open_camera
-
-
-JPEG_QUALITY = max(40, min(100, int(os.getenv("ATTENDANCE_LOCAL_CAMERA_JPEG_QUALITY", "88"))))
 STARTUP_TIMEOUT_SECONDS = max(0.5, float(os.getenv("ATTENDANCE_LOCAL_CAMERA_STARTUP_TIMEOUT_SECONDS", "4.0")))
+REMOTE_CAMERA_STREAM_URL = (
+    os.getenv("ATTENDANCE_REMOTE_CAMERA_STREAM_URL", "http://127.0.0.1:5051/stream.mjpg").strip()
+    or "http://127.0.0.1:5051/stream.mjpg"
+)
+STREAM_READ_TIMEOUT_SECONDS = max(0.25, float(os.getenv("ATTENDANCE_REMOTE_CAMERA_READ_TIMEOUT_SECONDS", "1.0")))
+STREAM_CHUNK_SIZE = max(1024, int(os.getenv("ATTENDANCE_REMOTE_CAMERA_CHUNK_SIZE", "4096")))
+STREAM_BUFFER_LIMIT = max(32768, int(os.getenv("ATTENDANCE_REMOTE_CAMERA_BUFFER_LIMIT", "1048576")))
 
 
 class LocalCameraProxy:
-    def __init__(self) -> None:
+    def __init__(self, stream_url: str = REMOTE_CAMERA_STREAM_URL) -> None:
+        self._stream_url = stream_url
         self._condition = threading.Condition()
         self._thread: threading.Thread | None = None
         self._stop_event: threading.Event | None = None
-        self._camera: CameraStream | None = None
         self._latest_jpeg: bytes | None = None
         self._source_name = ""
         self._last_error = ""
@@ -53,7 +56,6 @@ class LocalCameraProxy:
             thread.join(timeout=2.0)
 
         with self._condition:
-            self._camera = None
             self._latest_jpeg = None
             self._source_name = ""
             self._last_error = ""
@@ -99,29 +101,34 @@ class LocalCameraProxy:
         return self._source_name or "local-camera"
 
     def _capture_loop(self, stop_event: threading.Event) -> None:
-        camera: CameraStream | None = None
+        stream_response = None
+        buffer = bytearray()
         try:
-            camera = open_camera()
+            request = Request(self._stream_url, headers={"Accept": "multipart/x-mixed-replace,image/jpeg"})
+            stream_response = urlopen(request, timeout=STREAM_READ_TIMEOUT_SECONDS)
             with self._condition:
-                self._camera = camera
-                self._source_name = camera.source_name
+                self._source_name = self._stream_url
                 self._condition.notify_all()
 
             while not stop_event.is_set():
-                ok, frame = camera.read()
-                if not ok:
-                    raise RuntimeError("Could not read frame from webcam.")
+                try:
+                    chunk = stream_response.read(STREAM_CHUNK_SIZE)
+                except socket.timeout:
+                    continue
 
-                encoded_ok, encoded = cv2.imencode(
-                    ".jpg",
-                    frame,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY],
-                )
-                if not encoded_ok:
-                    raise RuntimeError("Could not encode webcam frame.")
+                if not chunk:
+                    raise RuntimeError(f"Remote camera stream closed: {self._stream_url}")
+
+                buffer.extend(chunk)
+                if len(buffer) > STREAM_BUFFER_LIMIT:
+                    del buffer[:-STREAM_BUFFER_LIMIT]
+
+                frame_bytes = _extract_jpeg_frame(buffer)
+                if frame_bytes is None:
+                    continue
 
                 with self._condition:
-                    self._latest_jpeg = encoded.tobytes()
+                    self._latest_jpeg = frame_bytes
                     self._condition.notify_all()
 
                 stop_event.wait(0.01)
@@ -130,14 +137,28 @@ class LocalCameraProxy:
                 self._last_error = str(exc)
                 self._condition.notify_all()
         finally:
-            if camera is not None:
-                camera.release()
+            if stream_response is not None:
+                stream_response.close()
 
             with self._condition:
-                if self._camera is camera:
-                    self._camera = None
                 if self._thread is threading.current_thread():
                     self._thread = None
                 if self._stop_event is stop_event:
                     self._stop_event = None
                 self._condition.notify_all()
+
+
+def _extract_jpeg_frame(buffer: bytearray) -> bytes | None:
+    start = buffer.find(b"\xff\xd8")
+    if start < 0:
+        return None
+
+    end = buffer.find(b"\xff\xd9", start + 2)
+    if end < 0:
+        if start > 0:
+            del buffer[:start]
+        return None
+
+    frame = bytes(buffer[start : end + 2])
+    del buffer[: end + 2]
+    return frame
