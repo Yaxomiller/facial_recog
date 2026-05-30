@@ -25,6 +25,7 @@ from src.auth import (
     reset_admin_password_with_email,
     setup_admin_credentials,
 )
+from src.local_camera_proxy import LocalCameraProxy
 from src.session_store import SessionState, get_session_store
 from src.v2.config import (
     MAX_PROFILE_CENTROID_THRESHOLD,
@@ -159,6 +160,19 @@ class BreathTestCompleteRequest(BaseModel):
     matched_score: float
 
 
+class LocalCameraSessionResponse(BaseModel):
+    ok: bool
+    running: bool
+    mode: str
+    source_name: str
+    frame_path: str
+
+
+class LocalCameraStopResponse(BaseModel):
+    ok: bool
+    running: bool
+
+
 app = FastAPI(
     title="Industrial Facial Attendance API",
     version="3.0.0",
@@ -173,6 +187,7 @@ app.add_middleware(
 )
 service = ScalableAttendanceService()
 session_store = get_session_store()
+local_camera_proxy = LocalCameraProxy()
 
 
 if (FRONTEND_DIST_DIR / "assets").exists():
@@ -208,6 +223,22 @@ def require_auth(
     return session
 
 
+def require_camera_auth(
+    token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    x_auth_token: str | None = Header(default=None),
+) -> SessionState:
+    resolved_token = _extract_token(authorization, x_auth_token)
+    if not resolved_token and token:
+        resolved_token = token.strip()
+    if not resolved_token:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    session = session_store.get_session(resolved_token)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return session
+
+
 @app.on_event("startup")
 def verify_session_backend() -> None:
     ensure_admin_auth_config(allow_bootstrap=True)
@@ -218,6 +249,11 @@ def verify_session_backend() -> None:
         f"single-profile centroid floor={SINGLE_PROFILE_MIN_CENTROID_SCORE:.3f}, "
         f"centroid cap={MAX_PROFILE_CENTROID_THRESHOLD:.3f}"
     )
+
+
+@app.on_event("shutdown")
+def shutdown_local_camera_proxy() -> None:
+    local_camera_proxy.stop()
 
 
 @app.get("/", response_class=HTMLResponse, response_model=None)
@@ -475,6 +511,55 @@ def cancel_breath_test(session_id: str, _: SessionState = Depends(require_auth))
 async def detect(image: UploadFile = File(...), _: SessionState = Depends(require_auth)) -> DetectionResult:
     image_bytes = await image.read()
     return service.detect(image_bytes=image_bytes)
+
+
+@app.get("/api/v2/local-camera/status", response_model=LocalCameraSessionResponse)
+def local_camera_status(_: SessionState = Depends(require_auth)) -> LocalCameraSessionResponse:
+    return LocalCameraSessionResponse(
+        ok=True,
+        running=local_camera_proxy.is_running(),
+        mode="backend-proxy",
+        source_name=local_camera_proxy.source_name(),
+        frame_path="/api/v2/local-camera/frame",
+    )
+
+
+@app.post("/api/v2/local-camera/start", response_model=LocalCameraSessionResponse)
+def start_local_camera(_: SessionState = Depends(require_auth)) -> LocalCameraSessionResponse:
+    try:
+        source_name = local_camera_proxy.start()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return LocalCameraSessionResponse(
+        ok=True,
+        running=True,
+        mode="backend-proxy",
+        source_name=source_name,
+        frame_path="/api/v2/local-camera/frame",
+    )
+
+
+@app.post("/api/v2/local-camera/stop", response_model=LocalCameraStopResponse)
+def stop_local_camera(_: SessionState = Depends(require_auth)) -> LocalCameraStopResponse:
+    local_camera_proxy.stop()
+    return LocalCameraStopResponse(ok=True, running=False)
+
+
+@app.get("/api/v2/local-camera/frame", response_model=None)
+def local_camera_frame(_: SessionState = Depends(require_camera_auth)) -> Response:
+    try:
+        if not local_camera_proxy.is_running():
+            local_camera_proxy.start()
+        frame_bytes = local_camera_proxy.get_frame_bytes()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    response = Response(content=frame_bytes, media_type="image/jpeg")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/api/v2/attendance", response_model=list[AttendanceRow])

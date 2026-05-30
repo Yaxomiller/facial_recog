@@ -1,11 +1,60 @@
-export function stopStream(streamRef, videoRef) {
-  if (streamRef.current) {
+import { apiClient } from "./api";
+
+const BACKEND_CAMERA_REFRESH_DELAY_MS = 140;
+
+function mediaSize(media) {
+  if (!media) {
+    return { width: 0, height: 0 };
+  }
+
+  if (media.tagName === "IMG") {
+    return {
+      width: media.naturalWidth || 0,
+      height: media.naturalHeight || 0,
+    };
+  }
+
+  return {
+    width: media.videoWidth || 0,
+    height: media.videoHeight || 0,
+  };
+}
+
+export function isMediaReady(media) {
+  if (!media) {
+    return false;
+  }
+
+  if (media.tagName === "IMG") {
+    return Boolean(media.complete && media.naturalWidth > 0 && media.naturalHeight > 0);
+  }
+
+  return Boolean(media.readyState >= 2 && media.videoWidth > 0 && media.videoHeight > 0);
+}
+
+function clearImagePreview(imageRef) {
+  if (imageRef?.current) {
+    imageRef.current.removeAttribute("src");
+  }
+}
+
+export function stopStream(streamRef, videoRef, imageRef = null) {
+  const session = streamRef.current;
+  if (session?.mode === "backend") {
+    session.stop();
+    streamRef.current = null;
+  } else if (session?.mode === "browser") {
+    session.stream.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  } else if (streamRef.current) {
     streamRef.current.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   }
+
   if (videoRef.current) {
     videoRef.current.srcObject = null;
   }
+  clearImagePreview(imageRef);
 }
 
 async function listVideoInputs() {
@@ -65,7 +114,7 @@ function normalizeCameraError(requestError, videoInputs) {
 
   if (name === "NotFoundError" || /requested device not found/i.test(message)) {
     return new Error(
-      `No browser-accessible camera was found.${deviceSummary} If you are on Radxa, prefer \`python app.py web\` or \`python app.py kiosk\` in Chromium instead of the embedded native shell.`,
+      `No browser-accessible camera was found.${deviceSummary} The app can use the local backend camera bridge instead if the frontend bundle is rebuilt with this update.`,
     );
   }
 
@@ -75,27 +124,29 @@ function normalizeCameraError(requestError, videoInputs) {
 
   if (!navigator.mediaDevices?.getUserMedia) {
     return new Error(
-      "This app shell does not expose browser camera access. On Radxa, use `python app.py web` or `python app.py kiosk` in Chromium.",
+      "This app shell does not expose browser camera access. The local backend camera bridge should be used instead.",
     );
   }
 
   return new Error(`${message}${deviceSummary}`);
 }
 
-export function stopLive(timerRef, streamRef, videoRef) {
+export function stopLive(timerRef, streamRef, videoRef, imageRef = null) {
   if (timerRef.current) {
     window.clearTimeout(timerRef.current);
     timerRef.current = null;
   }
-  stopStream(streamRef, videoRef);
+  stopStream(streamRef, videoRef, imageRef);
 }
 
-export function drawBoxes(canvas, video, boxes = []) {
-  if (!canvas || !video) {
+export function drawBoxes(canvas, media, boxes = []) {
+  if (!canvas || !media) {
     return;
   }
-  canvas.width = video.videoWidth || 0;
-  canvas.height = video.videoHeight || 0;
+
+  const { width, height } = mediaSize(media);
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext("2d");
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.strokeStyle = "#27d0bd";
@@ -106,9 +157,8 @@ export function drawBoxes(canvas, video, boxes = []) {
   });
 }
 
-function resolveFrameSize(video, maxWidth, maxHeight) {
-  const sourceWidth = video.videoWidth || 0;
-  const sourceHeight = video.videoHeight || 0;
+function resolveFrameSize(media, maxWidth, maxHeight) {
+  const { width: sourceWidth, height: sourceHeight } = mediaSize(media);
   if (!sourceWidth || !sourceHeight) {
     return { width: 0, height: 0 };
   }
@@ -134,14 +184,14 @@ function resolveFrameSize(video, maxWidth, maxHeight) {
   };
 }
 
-export function frameToBlob(video, canvas, options = {}) {
+export function frameToBlob(media, canvas, options = {}) {
   const {
-    maxWidth = video.videoWidth,
-    maxHeight = video.videoHeight,
+    maxWidth = mediaSize(media).width,
+    maxHeight = mediaSize(media).height,
     type = "image/jpeg",
     quality = 0.92,
   } = options;
-  const { width, height } = resolveFrameSize(video, maxWidth, maxHeight);
+  const { width, height } = resolveFrameSize(media, maxWidth, maxHeight);
   if (!width || !height) {
     return Promise.reject(new Error("Could not capture the current video frame."));
   }
@@ -149,7 +199,7 @@ export function frameToBlob(video, canvas, options = {}) {
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  context.drawImage(video, 0, 0, width, height);
+  context.drawImage(media, 0, 0, width, height);
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) {
@@ -161,14 +211,103 @@ export function frameToBlob(video, canvas, options = {}) {
   });
 }
 
-export async function startUserCamera(videoRef, streamRef) {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error(
-      "This app shell does not expose browser camera access. On Radxa, use `python app.py web` or `python app.py kiosk` in Chromium.",
-    );
+function bindVideoStream(videoRef, imageRef, stream) {
+  clearImagePreview(imageRef);
+  if (videoRef.current) {
+    videoRef.current.srcObject = stream;
+  }
+}
+
+function loadImageFrame(image, url) {
+  return new Promise((resolve, reject) => {
+    const handleLoad = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Could not load a frame from the local camera bridge."));
+    };
+    const cleanup = () => {
+      image.removeEventListener("load", handleLoad);
+      image.removeEventListener("error", handleError);
+    };
+
+    image.addEventListener("load", handleLoad);
+    image.addEventListener("error", handleError);
+    image.src = url;
+  });
+}
+
+async function startBackendCamera(videoRef, imageRef, streamRef, token) {
+  const previewImage = imageRef?.current;
+  if (!previewImage) {
+    throw new Error("The local camera preview element is unavailable.");
   }
 
-  stopStream(streamRef, videoRef);
+  const sessionInfo = await apiClient.startLocalCamera(token);
+  const backendSession = {
+    mode: "backend",
+    stopRequested: false,
+    refreshTimer: null,
+    stop() {
+      if (this.stopRequested) {
+        return;
+      }
+      this.stopRequested = true;
+      if (this.refreshTimer) {
+        window.clearTimeout(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      clearImagePreview(imageRef);
+      void apiClient.stopLocalCamera(token).catch(() => {
+        // Ignore stop errors while unwinding the preview.
+      });
+    },
+  };
+
+  const pumpFrames = async () => {
+    if (backendSession.stopRequested || !imageRef?.current) {
+      return;
+    }
+
+    try {
+      await loadImageFrame(
+        imageRef.current,
+        apiClient.localCameraFrameUrl(token, Date.now()),
+      );
+    } finally {
+      if (!backendSession.stopRequested) {
+        backendSession.refreshTimer = window.setTimeout(() => {
+          void pumpFrames();
+        }, BACKEND_CAMERA_REFRESH_DELAY_MS);
+      }
+    }
+  };
+
+  await loadImageFrame(
+    previewImage,
+    apiClient.localCameraFrameUrl(token, Date.now()),
+  );
+  backendSession.refreshTimer = window.setTimeout(() => {
+    void pumpFrames();
+  }, BACKEND_CAMERA_REFRESH_DELAY_MS);
+  streamRef.current = backendSession;
+  return {
+    mode: "backend",
+    sourceName: sessionInfo.source_name,
+  };
+}
+
+export async function startUserCamera({ token, videoRef, imageRef, streamRef }) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return startBackendCamera(videoRef, imageRef, streamRef, token);
+  }
+
+  stopStream(streamRef, videoRef, imageRef);
 
   const videoInputs = await listVideoInputs();
 
@@ -200,16 +339,26 @@ export async function startUserCamera(videoRef, streamRef) {
       videoInputs,
     );
 
-    streamRef.current = stream;
+    streamRef.current = {
+      mode: "browser",
+      stream,
+    };
+    bindVideoStream(videoRef, imageRef, stream);
     if (videoRef.current) {
-      videoRef.current.srcObject = stream;
       try {
         await videoRef.current.play();
       } catch {
         // Some browser shells autoplay the stream without requiring an explicit play call.
       }
     }
+    return { mode: "browser" };
   } catch (requestError) {
-    throw normalizeCameraError(requestError, videoInputs);
+    try {
+      return await startBackendCamera(videoRef, imageRef, streamRef, token);
+    } catch (backendError) {
+      const browserError = normalizeCameraError(requestError, videoInputs);
+      const backendMessage = backendError instanceof Error ? backendError.message : "The local camera bridge could not be started.";
+      throw new Error(`${browserError.message} Local camera bridge error: ${backendMessage}`);
+    }
   }
 }

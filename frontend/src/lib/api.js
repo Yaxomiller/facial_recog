@@ -185,6 +185,35 @@ export const apiClient = {
       body,
     });
   },
+  getLocalCameraStatus(token) {
+    return request("/api/v2/local-camera/status", {
+      headers: buildHeaders(token),
+    });
+  },
+  startLocalCamera(token) {
+    return request("/api/v2/local-camera/start", {
+      method: "POST",
+      headers: buildHeaders(token),
+    });
+  },
+  stopLocalCamera(token) {
+    return request("/api/v2/local-camera/stop", {
+      method: "POST",
+      headers: buildHeaders(token),
+    });
+  },
+  localCameraFrameUrl(token, cacheBust = "") {
+    const resolvedToken = resolveToken(token);
+    const search = new URLSearchParams();
+    if (resolvedToken) {
+      search.set("token", resolvedToken);
+    }
+    if (cacheBust) {
+      search.set("ts", String(cacheBust));
+    }
+    const suffix = search.toString();
+    return resolveRequestUrl(`/api/v2/local-camera/frame${suffix ? `?${suffix}` : ""}`);
+  },
   recognize(token, body) {
     return request("/api/v2/recognitions", {
       method: "POST",

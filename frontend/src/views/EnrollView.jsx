@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Panel from "../components/Panel";
 import { apiClient } from "../lib/api";
-import { frameToBlob, startUserCamera, stopStream } from "../lib/media";
+import { frameToBlob, isMediaReady, startUserCamera, stopStream } from "../lib/media";
 
 const MIN_ENROLLMENT_IMAGES = 3;
 const CAPTURE_GUIDANCE = [
@@ -16,11 +16,13 @@ export default function EnrollView({ token, onUpdated }) {
   const [employeeCode, setEmployeeCode] = useState("");
   const [name, setName] = useState("");
   const [frames, setFrames] = useState([]);
+  const [cameraMode, setCameraMode] = useState(null);
   const [message, setMessage] = useState(
     `Enter details and capture at least ${MIN_ENROLLMENT_IMAGES} clear photos. Start with front, slight left, and slight right views.`,
   );
   const [busy, setBusy] = useState(false);
   const videoRef = useRef(null);
+  const imageRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const framesRef = useRef([]);
@@ -31,10 +33,14 @@ export default function EnrollView({ token, onUpdated }) {
 
   useEffect(() => {
     return () => {
-      stopStream(streamRef, videoRef);
+      stopStream(streamRef, videoRef, imageRef);
       framesRef.current.forEach((frame) => URL.revokeObjectURL(frame.preview));
     };
   }, []);
+
+  function activeMediaElement() {
+    return cameraMode === "backend" ? imageRef.current : videoRef.current;
+  }
 
   function clearFrames() {
     frames.forEach((frame) => URL.revokeObjectURL(frame.preview));
@@ -43,9 +49,17 @@ export default function EnrollView({ token, onUpdated }) {
 
   async function handleStartCamera() {
     try {
-      await startUserCamera(videoRef, streamRef);
+      const session = await startUserCamera({
+        token,
+        videoRef,
+        imageRef,
+        streamRef,
+      });
+      setCameraMode(session.mode);
       setMessage(
-        `Camera is live. Capture ${MIN_ENROLLMENT_IMAGES} clear face pictures. ${CAPTURE_GUIDANCE[framesRef.current.length] || CAPTURE_GUIDANCE[0]}`,
+        session.mode === "backend"
+          ? `Local camera bridge is live. Capture ${MIN_ENROLLMENT_IMAGES} clear face pictures. ${CAPTURE_GUIDANCE[framesRef.current.length] || CAPTURE_GUIDANCE[0]}`
+          : `Camera is live. Capture ${MIN_ENROLLMENT_IMAGES} clear face pictures. ${CAPTURE_GUIDANCE[framesRef.current.length] || CAPTURE_GUIDANCE[0]}`,
       );
     } catch (requestError) {
       const text = requestError instanceof Error ? requestError.message : "Camera could not be started.";
@@ -54,11 +68,12 @@ export default function EnrollView({ token, onUpdated }) {
   }
 
   async function handleCapture() {
-    if (!videoRef.current || videoRef.current.readyState < 2) {
+    const media = activeMediaElement();
+    if (!isMediaReady(media)) {
       setMessage("Camera is not ready.");
       return;
     }
-    const blob = await frameToBlob(videoRef.current, canvasRef.current);
+    const blob = await frameToBlob(media, canvasRef.current);
     const preview = URL.createObjectURL(blob);
     setFrames((current) => [
       ...current,
@@ -139,7 +154,8 @@ export default function EnrollView({ token, onUpdated }) {
 
       <Panel eyebrow="Step 2" title="Camera Preview">
         <div className="video-frame">
-          <video ref={videoRef} autoPlay playsInline muted />
+          <video ref={videoRef} autoPlay playsInline muted hidden={cameraMode === "backend"} />
+          <img ref={imageRef} alt="Camera preview" hidden={cameraMode !== "backend"} />
           <canvas ref={canvasRef} hidden />
         </div>
 
