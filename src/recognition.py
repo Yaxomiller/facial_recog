@@ -1,7 +1,7 @@
 import cv2
 
+from src.camera import open_camera
 from src.config import (
-    CAMERA_INDEX,
     LBPH_CONFIDENCE_THRESHOLD,
     LIVENESS_EYE_CLOSED_FRAMES,
     LIVENESS_EYE_OPEN_FRAMES,
@@ -63,9 +63,7 @@ def recognize_and_mark() -> None:
     recognizer = cv2.face.LBPHFaceRecognizer_create()
     recognizer.read(str(trainer_file()))
 
-    camera = cv2.VideoCapture(CAMERA_INDEX)
-    if not camera.isOpened():
-        raise RuntimeError("Could not open webcam.")
+    camera = open_camera()
 
     liveness_tracker = BlinkLivenessTracker(
         min_open_frames=LIVENESS_EYE_OPEN_FRAMES,

@@ -2,7 +2,8 @@ from pathlib import Path
 
 import cv2
 
-from src.config import CAMERA_INDEX, FACES_DIR
+from src.camera import open_camera
+from src.config import FACES_DIR
 from src.db import upsert_person
 from src.storage import ensure_directories, person_directory
 from src.vision import detect_faces, extract_face_region
@@ -13,9 +14,7 @@ def enroll_person(name: str, max_images: int) -> None:
     person_dir = person_directory(name)
     person_dir.mkdir(parents=True, exist_ok=True)
 
-    camera = cv2.VideoCapture(CAMERA_INDEX)
-    if not camera.isOpened():
-        raise RuntimeError("Could not open webcam.")
+    camera = open_camera()
 
     saved_images = len(list(person_dir.glob("*.jpg")))
 
