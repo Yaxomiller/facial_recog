@@ -225,16 +225,6 @@ export const apiClient = {
     const suffix = search.toString();
     return resolveRequestUrl(`/api/v2/local-camera/frame${suffix ? `?${suffix}` : ""}`);
   },
-  openFlaskCamera() {
-    return request(resolveFlaskCameraUrl("/camera/open"), {
-      method: "POST",
-    });
-  },
-  closeFlaskCamera() {
-    return request(resolveFlaskCameraUrl("/camera/close"), {
-      method: "POST",
-    });
-  },
   flaskCameraStreamUrl(cacheBust = "") {
     const search = new URLSearchParams();
     if (cacheBust) {

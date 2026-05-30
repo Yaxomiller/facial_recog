@@ -244,18 +244,10 @@ async function startBackendCamera(videoRef, imageRef, streamRef) {
     throw new Error("The local camera preview element is unavailable.");
   }
 
-  const sessionInfo = await apiClient.openFlaskCamera();
-  try {
-    await bindImageStream(
-      previewImage,
-      apiClient.flaskCameraStreamUrl(Date.now()),
-    );
-  } catch (streamError) {
-    void apiClient.closeFlaskCamera().catch(() => {
-      // Ignore close errors while unwinding a failed startup.
-    });
-    throw streamError;
-  }
+  await bindImageStream(
+    previewImage,
+    apiClient.flaskCameraStreamUrl(Date.now()),
+  );
 
   const backendSession = {
     mode: "backend",
@@ -269,16 +261,13 @@ async function startBackendCamera(videoRef, imageRef, streamRef) {
         videoRef.current.srcObject = null;
       }
       clearImagePreview(imageRef);
-      void apiClient.closeFlaskCamera().catch(() => {
-        // Ignore stop errors while unwinding the preview.
-      });
     },
   };
 
   streamRef.current = backendSession;
   return {
     mode: "backend",
-    sourceName: sessionInfo.source_name || "Radxa MJPEG bridge",
+    sourceName: "Radxa MJPEG bridge",
   };
 }
 
