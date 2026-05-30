@@ -19,6 +19,10 @@ function isTauriRuntime() {
 
 const DEFAULT_API_BASE_URL = isTauriRuntime() ? "http://127.0.0.1:8000" : "";
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, "");
+const DEFAULT_FLASK_CAMERA_BASE_URL = "http://127.0.0.1:5051";
+const FLASK_CAMERA_BASE_URL = (
+  import.meta.env.VITE_FLASK_CAMERA_BASE_URL || DEFAULT_FLASK_CAMERA_BASE_URL
+).trim().replace(/\/+$/, "");
 const API_RETRY_COUNT = Math.max(
   1,
   Number.parseInt(import.meta.env.VITE_API_RETRY_COUNT || (isTauriRuntime() ? "15" : "1"), 10) || 1,
@@ -44,6 +48,13 @@ function resolveRequestUrl(path) {
     return path;
   }
   return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
+}
+
+function resolveFlaskCameraUrl(path) {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  return `${FLASK_CAMERA_BASE_URL}${path}`;
 }
 
 async function parseApiResponse(response, requestUrl) {
@@ -213,6 +224,24 @@ export const apiClient = {
     }
     const suffix = search.toString();
     return resolveRequestUrl(`/api/v2/local-camera/frame${suffix ? `?${suffix}` : ""}`);
+  },
+  openFlaskCamera() {
+    return request(resolveFlaskCameraUrl("/camera/open"), {
+      method: "POST",
+    });
+  },
+  closeFlaskCamera() {
+    return request(resolveFlaskCameraUrl("/camera/close"), {
+      method: "POST",
+    });
+  },
+  flaskCameraStreamUrl(cacheBust = "") {
+    const search = new URLSearchParams();
+    if (cacheBust) {
+      search.set("ts", String(cacheBust));
+    }
+    const suffix = search.toString();
+    return resolveFlaskCameraUrl(`/stream.mjpg${suffix ? `?${suffix}` : ""}`);
   },
   recognize(token, body) {
     return request("/api/v2/recognitions", {

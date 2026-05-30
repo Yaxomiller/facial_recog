@@ -529,7 +529,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
         <div className="alert info">{message}</div>
         <div className="video-frame">
           <video ref={videoRef} autoPlay playsInline muted hidden={cameraMode === "backend"} />
-          <img ref={imageRef} alt="Camera preview" hidden={cameraMode !== "backend"} />
+          <img ref={imageRef} alt="Camera preview" crossOrigin="anonymous" hidden={cameraMode !== "backend"} />
           <canvas ref={overlayRef} className="overlay-canvas" />
           <canvas ref={canvasRef} hidden />
         </div>

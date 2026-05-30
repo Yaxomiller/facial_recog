@@ -1,7 +1,5 @@
 import { apiClient } from "./api";
 
-const BACKEND_CAMERA_REFRESH_DELAY_MS = 140;
-
 function mediaSize(media) {
   if (!media) {
     return { width: 0, height: 0 };
@@ -26,7 +24,7 @@ export function isMediaReady(media) {
   }
 
   if (media.tagName === "IMG") {
-    return Boolean(media.complete && media.naturalWidth > 0 && media.naturalHeight > 0);
+    return Boolean(media.naturalWidth > 0 && media.naturalHeight > 0);
   }
 
   return Boolean(media.readyState >= 2 && media.videoWidth > 0 && media.videoHeight > 0);
@@ -114,7 +112,7 @@ function normalizeCameraError(requestError, videoInputs) {
 
   if (name === "NotFoundError" || /requested device not found/i.test(message)) {
     return new Error(
-      `No browser-accessible camera was found.${deviceSummary} The app can use the local backend camera bridge instead if the frontend bundle is rebuilt with this update.`,
+      `No browser-accessible camera was found.${deviceSummary} The app will try the local backend camera bridge instead.`,
     );
   }
 
@@ -218,7 +216,7 @@ function bindVideoStream(videoRef, imageRef, stream) {
   }
 }
 
-function loadImageFrame(image, url) {
+function bindImageStream(image, url) {
   return new Promise((resolve, reject) => {
     const handleLoad = () => {
       cleanup();
@@ -226,7 +224,7 @@ function loadImageFrame(image, url) {
     };
     const handleError = () => {
       cleanup();
-      reject(new Error("Could not load a frame from the local camera bridge."));
+      reject(new Error("Could not load the Radxa MJPEG stream from the local camera bridge."));
     };
     const cleanup = () => {
       image.removeEventListener("load", handleLoad);
@@ -235,76 +233,58 @@ function loadImageFrame(image, url) {
 
     image.addEventListener("load", handleLoad);
     image.addEventListener("error", handleError);
+    image.crossOrigin = "anonymous";
     image.src = url;
   });
 }
 
-async function startBackendCamera(videoRef, imageRef, streamRef, token) {
+async function startBackendCamera(videoRef, imageRef, streamRef) {
   const previewImage = imageRef?.current;
   if (!previewImage) {
     throw new Error("The local camera preview element is unavailable.");
   }
 
-  const sessionInfo = await apiClient.startLocalCamera(token);
+  const sessionInfo = await apiClient.openFlaskCamera();
+  try {
+    await bindImageStream(
+      previewImage,
+      apiClient.flaskCameraStreamUrl(Date.now()),
+    );
+  } catch (streamError) {
+    void apiClient.closeFlaskCamera().catch(() => {
+      // Ignore close errors while unwinding a failed startup.
+    });
+    throw streamError;
+  }
+
   const backendSession = {
     mode: "backend",
     stopRequested: false,
-    refreshTimer: null,
     stop() {
       if (this.stopRequested) {
         return;
       }
       this.stopRequested = true;
-      if (this.refreshTimer) {
-        window.clearTimeout(this.refreshTimer);
-        this.refreshTimer = null;
-      }
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
       clearImagePreview(imageRef);
-      void apiClient.stopLocalCamera(token).catch(() => {
+      void apiClient.closeFlaskCamera().catch(() => {
         // Ignore stop errors while unwinding the preview.
       });
     },
   };
 
-  const pumpFrames = async () => {
-    if (backendSession.stopRequested || !imageRef?.current) {
-      return;
-    }
-
-    try {
-      await loadImageFrame(
-        imageRef.current,
-        apiClient.localCameraFrameUrl(token, Date.now()),
-      );
-    } finally {
-      if (!backendSession.stopRequested) {
-        backendSession.refreshTimer = window.setTimeout(() => {
-          void pumpFrames();
-        }, BACKEND_CAMERA_REFRESH_DELAY_MS);
-      }
-    }
-  };
-
-  await loadImageFrame(
-    previewImage,
-    apiClient.localCameraFrameUrl(token, Date.now()),
-  );
-  backendSession.refreshTimer = window.setTimeout(() => {
-    void pumpFrames();
-  }, BACKEND_CAMERA_REFRESH_DELAY_MS);
   streamRef.current = backendSession;
   return {
     mode: "backend",
-    sourceName: sessionInfo.source_name,
+    sourceName: sessionInfo.source_name || "Radxa MJPEG bridge",
   };
 }
 
-export async function startUserCamera({ token, videoRef, imageRef, streamRef }) {
+export async function startUserCamera({ videoRef, imageRef, streamRef }) {
   if (!navigator.mediaDevices?.getUserMedia) {
-    return startBackendCamera(videoRef, imageRef, streamRef, token);
+    return startBackendCamera(videoRef, imageRef, streamRef);
   }
 
   stopStream(streamRef, videoRef, imageRef);
@@ -354,7 +334,7 @@ export async function startUserCamera({ token, videoRef, imageRef, streamRef }) 
     return { mode: "browser" };
   } catch (requestError) {
     try {
-      return await startBackendCamera(videoRef, imageRef, streamRef, token);
+      return await startBackendCamera(videoRef, imageRef, streamRef);
     } catch (backendError) {
       const browserError = normalizeCameraError(requestError, videoInputs);
       const backendMessage = backendError instanceof Error ? backendError.message : "The local camera bridge could not be started.";

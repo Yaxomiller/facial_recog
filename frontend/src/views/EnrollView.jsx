@@ -155,7 +155,7 @@ export default function EnrollView({ token, onUpdated }) {
       <Panel eyebrow="Step 2" title="Camera Preview">
         <div className="video-frame">
           <video ref={videoRef} autoPlay playsInline muted hidden={cameraMode === "backend"} />
-          <img ref={imageRef} alt="Camera preview" hidden={cameraMode !== "backend"} />
+          <img ref={imageRef} alt="Camera preview" crossOrigin="anonymous" hidden={cameraMode !== "backend"} />
           <canvas ref={canvasRef} hidden />
         </div>
 

@@ -53,6 +53,7 @@ class FlaskCameraBridgeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["device"], "/dev/video0")
+        self.assertEqual(payload["stream_url"], "/stream.mjpg")
         self.assertFalse(payload["running"])
 
     def test_open_camera_endpoint_marks_bridge_running(self) -> None:
@@ -69,6 +70,13 @@ class FlaskCameraBridgeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "image/jpeg")
         self.assertEqual(response.data, b"jpeg-bytes")
+
+    def test_plain_stream_endpoint_returns_mjpeg_stream(self) -> None:
+        response = self.client.get("/stream.mjpg")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "multipart/x-mixed-replace")
+        self.assertIn(b"jpeg-bytes", response.data)
 
 
 if __name__ == "__main__":

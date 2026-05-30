@@ -9,27 +9,17 @@ import cv2
 from flask import Flask, Response, jsonify, request
 
 
-CAMERA_DEVICE = os.getenv("ATTENDANCE_FLASK_CAMERA_DEVICE", "/dev/video0").strip() or "/dev/video0"
-FRAME_WIDTH = int(os.getenv("ATTENDANCE_FLASK_CAMERA_WIDTH", "1920"))
-FRAME_HEIGHT = int(os.getenv("ATTENDANCE_FLASK_CAMERA_HEIGHT", "1080"))
-FRAME_RATE = int(os.getenv("ATTENDANCE_FLASK_CAMERA_FPS", "30"))
+CAMERA_DEVICE = "/dev/video0"
+CAMERA_PIPELINE = (
+    "v4l2src device=/dev/video0 en-awisp=1 en-largemode=0 ! "
+    "video/x-raw,format=I420,width=1920,height=1080,framerate=30/1 ! "
+    "appsink drop=true sync=false"
+)
 JPEG_QUALITY = max(40, min(100, int(os.getenv("ATTENDANCE_FLASK_JPEG_QUALITY", "88"))))
 STREAM_FRAME_DELAY_SECONDS = max(0.01, float(os.getenv("ATTENDANCE_FLASK_STREAM_FRAME_DELAY_SECONDS", "0.05")))
 APP_HOST = os.getenv("ATTENDANCE_FLASK_HOST", "127.0.0.1").strip() or "127.0.0.1"
 APP_PORT = int(os.getenv("ATTENDANCE_FLASK_PORT", "5051"))
 CAP_GSTREAMER = getattr(cv2, "CAP_GSTREAMER", 1800)
-
-
-def build_i420_pipeline(device_path: str) -> str:
-    return (
-        f"v4l2src device={device_path} en-awisp=1 en-largemode=0 ! "
-        f"video/x-raw,format=I420,width={FRAME_WIDTH},height={FRAME_HEIGHT},"
-        f"framerate={FRAME_RATE}/1 ! appsink drop=true sync=false"
-    )
-
-
-DEFAULT_PIPELINE = build_i420_pipeline(CAMERA_DEVICE)
-CAMERA_PIPELINE = os.getenv("ATTENDANCE_FLASK_CAMERA_PIPELINE", DEFAULT_PIPELINE).strip() or DEFAULT_PIPELINE
 
 
 @dataclass
@@ -137,7 +127,8 @@ def status_payload(status: CameraStatus) -> dict[str, object]:
         "pipeline": status.pipeline,
         "last_error": status.last_error,
         "frame_url": "/camera/frame.jpg",
-        "stream_url": "/camera/stream.mjpg",
+        "stream_url": "/stream.mjpg",
+        "source_name": "Radxa MJPEG bridge",
     }
 
 
@@ -169,25 +160,34 @@ def index() -> str:
             <button class="ghost" onclick="refreshStatus()">Refresh Status</button>
           </div>
           <pre id="status">Loading...</pre>
-          <img id="preview" src="/camera/frame.jpg?ts=0" alt="Camera Preview" />
+          <img id="preview" alt="Camera Preview" />
         </div>
         <script>
+          function setPreviewVisible(enabled) {{
+            const preview = document.getElementById('preview');
+            if (enabled) {{
+              preview.src = '/stream.mjpg?ts=' + Date.now();
+              return;
+            }}
+            preview.removeAttribute('src');
+          }}
           async function refreshStatus() {{
             const response = await fetch('/camera/status');
             const payload = await response.json();
             document.getElementById('status').textContent = JSON.stringify(payload, null, 2);
-            document.getElementById('preview').src = '/camera/frame.jpg?ts=' + Date.now();
+            setPreviewVisible(Boolean(payload.running));
           }}
           async function openCamera() {{
             const response = await fetch('/camera/open', {{ method: 'POST' }});
             const payload = await response.json();
             document.getElementById('status').textContent = JSON.stringify(payload, null, 2);
-            document.getElementById('preview').src = '/camera/frame.jpg?ts=' + Date.now();
+            setPreviewVisible(response.ok && Boolean(payload.ok));
           }}
           async function closeCamera() {{
             const response = await fetch('/camera/close', {{ method: 'POST' }});
             const payload = await response.json();
             document.getElementById('status').textContent = JSON.stringify(payload, null, 2);
+            setPreviewVisible(false);
           }}
           refreshStatus();
         </script>
@@ -234,6 +234,7 @@ def camera_frame():
     return Response(frame_bytes, mimetype="image/jpeg")
 
 
+@app.route("/stream.mjpg", methods=["GET"])
 @app.route("/camera/stream.mjpg", methods=["GET"])
 def camera_stream():
     try:
