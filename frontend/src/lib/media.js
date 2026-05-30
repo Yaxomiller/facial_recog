@@ -8,6 +8,80 @@ export function stopStream(streamRef, videoRef) {
   }
 }
 
+async function listVideoInputs() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return [];
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((device) => device.kind === "videoinput");
+  } catch {
+    return [];
+  }
+}
+
+async function requestCameraStream(constraintsList, videoInputs) {
+  let lastError = null;
+
+  for (const constraints of constraintsList) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (requestError) {
+      lastError = requestError;
+    }
+  }
+
+  for (const device of videoInputs) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        video: {
+          deviceId: { exact: device.deviceId },
+        },
+        audio: false,
+      });
+    } catch (requestError) {
+      lastError = requestError;
+    }
+  }
+
+  throw lastError ?? new Error("Camera could not be started.");
+}
+
+function normalizeCameraError(requestError, videoInputs) {
+  const name = requestError instanceof Error ? requestError.name : "";
+  const message = requestError instanceof Error ? requestError.message : "Camera could not be started.";
+  const deviceSummary = videoInputs.length
+    ? ` Browser sees ${videoInputs.length} video input device${videoInputs.length === 1 ? "" : "s"}.`
+    : " Browser does not currently expose any video input devices.";
+
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return new Error("Camera permission was denied. Allow camera access in the browser and try again.");
+  }
+
+  if (name === "NotReadableError") {
+    return new Error("The camera exists but is busy or unavailable to the browser. Close other apps using the camera and try again.");
+  }
+
+  if (name === "NotFoundError" || /requested device not found/i.test(message)) {
+    return new Error(
+      `No browser-accessible camera was found.${deviceSummary} If you are on Radxa, prefer \`python app.py web\` or \`python app.py kiosk\` in Chromium instead of the embedded native shell.`,
+    );
+  }
+
+  if (name === "OverconstrainedError") {
+    return new Error("The browser found a camera, but the requested video mode is unsupported.");
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return new Error(
+      "This app shell does not expose browser camera access. On Radxa, use `python app.py web` or `python app.py kiosk` in Chromium.",
+    );
+  }
+
+  return new Error(`${message}${deviceSummary}`);
+}
+
 export function stopLive(timerRef, streamRef, videoRef) {
   if (timerRef.current) {
     window.clearTimeout(timerRef.current);
@@ -88,25 +162,54 @@ export function frameToBlob(video, canvas, options = {}) {
 }
 
 export async function startUserCamera(videoRef, streamRef) {
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "user" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        frameRate: { ideal: 30 },
-      },
-      audio: false,
-    });
-  } catch {
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false,
-    });
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error(
+      "This app shell does not expose browser camera access. On Radxa, use `python app.py web` or `python app.py kiosk` in Chromium.",
+    );
   }
-  streamRef.current = stream;
-  if (videoRef.current) {
-    videoRef.current.srcObject = stream;
+
+  stopStream(streamRef, videoRef);
+
+  const videoInputs = await listVideoInputs();
+
+  try {
+    const stream = await requestCameraStream(
+      [
+        {
+          video: {
+            facingMode: { ideal: "user" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        {
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          },
+          audio: false,
+        },
+        {
+          video: true,
+          audio: false,
+        },
+      ],
+      videoInputs,
+    );
+
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      try {
+        await videoRef.current.play();
+      } catch {
+        // Some browser shells autoplay the stream without requiring an explicit play call.
+      }
+    }
+  } catch (requestError) {
+    throw normalizeCameraError(requestError, videoInputs);
   }
 }
