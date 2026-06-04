@@ -7,6 +7,7 @@ export class ApiError extends Error {
 }
 
 const TOKEN_KEY = "attendance_operator_token";
+const env = import.meta.env ?? {};
 
 function isTauriRuntime() {
   if (typeof window === "undefined") {
@@ -18,18 +19,16 @@ function isTauriRuntime() {
 }
 
 const DEFAULT_API_BASE_URL = isTauriRuntime() ? "http://127.0.0.1:8000" : "";
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, "");
+const API_BASE_URL = (env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, "");
 const DEFAULT_FLASK_CAMERA_BASE_URL = "http://127.0.0.1:5051";
-const FLASK_CAMERA_BASE_URL = (
-  import.meta.env.VITE_FLASK_CAMERA_BASE_URL || DEFAULT_FLASK_CAMERA_BASE_URL
-).trim().replace(/\/+$/, "");
+const FLASK_CAMERA_BASE_URL = (env.VITE_FLASK_CAMERA_BASE_URL || DEFAULT_FLASK_CAMERA_BASE_URL).trim().replace(/\/+$/, "");
 const API_RETRY_COUNT = Math.max(
   1,
-  Number.parseInt(import.meta.env.VITE_API_RETRY_COUNT || (isTauriRuntime() ? "15" : "1"), 10) || 1,
+  Number.parseInt(env.VITE_API_RETRY_COUNT || (isTauriRuntime() ? "15" : "1"), 10) || 1,
 );
 const API_RETRY_DELAY_MS = Math.max(
   0,
-  Number.parseInt(import.meta.env.VITE_API_RETRY_DELAY_MS || (isTauriRuntime() ? "350" : "0"), 10) || 0,
+  Number.parseInt(env.VITE_API_RETRY_DELAY_MS || (isTauriRuntime() ? "350" : "0"), 10) || 0,
 );
 
 function delay(ms) {
@@ -224,6 +223,18 @@ export const apiClient = {
     }
     const suffix = search.toString();
     return resolveRequestUrl(`/api/v2/local-camera/frame${suffix ? `?${suffix}` : ""}`);
+  },
+  localCameraStreamUrl(token, cacheBust = "") {
+    const resolvedToken = resolveToken(token);
+    const search = new URLSearchParams();
+    if (resolvedToken) {
+      search.set("token", resolvedToken);
+    }
+    if (cacheBust) {
+      search.set("ts", String(cacheBust));
+    }
+    const suffix = search.toString();
+    return resolveRequestUrl(`/api/v2/local-camera/stream.mjpg${suffix ? `?${suffix}` : ""}`);
   },
   flaskCameraStreamUrl(cacheBust = "") {
     const search = new URLSearchParams();

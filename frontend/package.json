@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --experimental-specifier-resolution=node --test ./tests/media.backend.test.mjs",
     "preview": "vite preview",
     "desktop:prepare": "node ../scripts/run_backend_bundle.mjs",
     "desktop:dev": "tauri dev",

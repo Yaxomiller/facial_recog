@@ -1,4 +1,4 @@
-import { apiClient } from "./api";
+import { apiClient } from "./api.js";
 
 function mediaSize(media) {
   if (!media) {
@@ -224,7 +224,7 @@ function bindImageStream(image, url) {
     };
     const handleError = () => {
       cleanup();
-      reject(new Error("Could not load the Radxa MJPEG stream from the local camera bridge."));
+      reject(new Error("Could not load the local camera stream from the backend camera bridge."));
     };
     const cleanup = () => {
       image.removeEventListener("load", handleLoad);
@@ -238,15 +238,16 @@ function bindImageStream(image, url) {
   });
 }
 
-async function startBackendCamera(videoRef, imageRef, streamRef) {
+async function startBackendCamera(token, videoRef, imageRef, streamRef) {
   const previewImage = imageRef?.current;
   if (!previewImage) {
     throw new Error("The local camera preview element is unavailable.");
   }
 
+  const backendStatus = await apiClient.startLocalCamera(token);
   await bindImageStream(
     previewImage,
-    apiClient.flaskCameraStreamUrl(Date.now()),
+    apiClient.localCameraStreamUrl(token, Date.now()),
   );
 
   const backendSession = {
@@ -261,19 +262,20 @@ async function startBackendCamera(videoRef, imageRef, streamRef) {
         videoRef.current.srcObject = null;
       }
       clearImagePreview(imageRef);
+      void apiClient.stopLocalCamera(token).catch(() => {});
     },
   };
 
   streamRef.current = backendSession;
   return {
     mode: "backend",
-    sourceName: "Radxa MJPEG bridge",
+    sourceName: backendStatus?.source_name || "local-camera",
   };
 }
 
-export async function startUserCamera({ videoRef, imageRef, streamRef }) {
+export async function startUserCamera({ token, videoRef, imageRef, streamRef }) {
   if (!navigator.mediaDevices?.getUserMedia) {
-    return startBackendCamera(videoRef, imageRef, streamRef);
+    return startBackendCamera(token, videoRef, imageRef, streamRef);
   }
 
   stopStream(streamRef, videoRef, imageRef);
@@ -323,7 +325,7 @@ export async function startUserCamera({ videoRef, imageRef, streamRef }) {
     return { mode: "browser" };
   } catch (requestError) {
     try {
-      return await startBackendCamera(videoRef, imageRef, streamRef);
+      return await startBackendCamera(token, videoRef, imageRef, streamRef);
     } catch (backendError) {
       const browserError = normalizeCameraError(requestError, videoInputs);
       const backendMessage = backendError instanceof Error ? backendError.message : "The local camera bridge could not be started.";

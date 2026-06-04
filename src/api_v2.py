@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
 import os
 from pathlib import Path
+import time
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -556,6 +558,40 @@ def local_camera_frame(_: SessionState = Depends(require_camera_auth)) -> Respon
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     response = Response(content=frame_bytes, media_type="image/jpeg")
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.get("/api/v2/local-camera/stream.mjpg", response_model=None)
+def local_camera_stream(_: SessionState = Depends(require_camera_auth)) -> StreamingResponse:
+    try:
+        if not local_camera_proxy.is_running():
+            local_camera_proxy.start()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def generate() -> Iterator[bytes]:
+        while True:
+            try:
+                frame_bytes = local_camera_proxy.get_frame_bytes(timeout_seconds=5.0)
+            except RuntimeError:
+                break
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-store, no-cache, must-revalidate\r\n\r\n"
+                + frame_bytes
+                + b"\r\n"
+            )
+            time.sleep(0.03)
+
+    response = StreamingResponse(
+        generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
