@@ -28,20 +28,22 @@ class CameraTests(unittest.TestCase):
             ),
             patch("src.camera._radxa_device_paths", return_value=["/dev/video0"]),
             patch("src.camera._linux_video_device_paths", return_value=[]),
+            patch("src.camera._open_gstreamer_camera", return_value=None) as open_gstreamer_camera,
             patch("src.camera.cv2.VideoCapture", side_effect=[direct_capture, fallback_capture]) as video_capture,
         ):
             camera = open_camera()
 
         self.assertIs(camera.capture, fallback_capture)
         self.assertTrue(camera.decode_i420)
+        open_gstreamer_camera.assert_called_once()
         self.assertEqual(video_capture.call_args_list[0].args, (0,))
         self.assertEqual(video_capture.call_args_list[1].args[1], CAP_GSTREAMER)
         self.assertIn("v4l2src device=/dev/video0", video_capture.call_args_list[1].args[0])
         direct_capture.release.assert_called_once()
 
     def test_open_camera_honors_explicit_pipeline_and_raw_i420_flag(self) -> None:
-        pipeline_capture = Mock()
-        pipeline_capture.isOpened.return_value = True
+        native_camera = Mock()
+        native_camera.source_name = "Radxa GStreamer pipeline"
         pipeline = "v4l2src device=/dev/video2 ! video/x-raw,format=I420 ! appsink"
 
         with (
@@ -54,17 +56,17 @@ class CameraTests(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch("src.camera.cv2.VideoCapture", return_value=pipeline_capture) as video_capture,
+            patch("src.camera._open_gstreamer_camera", return_value=native_camera) as open_gstreamer_camera,
+            patch("src.camera.cv2.VideoCapture") as video_capture,
         ):
             camera = open_camera()
 
-        self.assertEqual(camera.source_name, "Radxa GStreamer pipeline")
-        self.assertTrue(camera.decode_i420)
-        self.assertEqual(video_capture.call_args.args, (pipeline, CAP_GSTREAMER))
+        self.assertIs(camera, native_camera)
+        self.assertEqual(open_gstreamer_camera.call_args.args, (pipeline, "Radxa GStreamer pipeline"))
+        video_capture.assert_not_called()
 
     def test_open_camera_prefers_explicit_pipeline_in_auto_mode(self) -> None:
-        pipeline_capture = Mock()
-        pipeline_capture.isOpened.return_value = True
+        native_camera = Mock()
         pipeline = "v4l2src device=/dev/video1 ! video/x-raw, format=I420 ! appsink"
 
         with (
@@ -76,12 +78,14 @@ class CameraTests(unittest.TestCase):
                 },
                 clear=False,
             ),
-            patch("src.camera.cv2.VideoCapture", return_value=pipeline_capture) as video_capture,
+            patch("src.camera._open_gstreamer_camera", return_value=native_camera) as open_gstreamer_camera,
+            patch("src.camera.cv2.VideoCapture") as video_capture,
         ):
             camera = open_camera()
 
-        self.assertTrue(camera.decode_i420)
-        self.assertEqual(video_capture.call_args.args, (pipeline, CAP_GSTREAMER))
+        self.assertIs(camera, native_camera)
+        self.assertEqual(open_gstreamer_camera.call_args.args, (pipeline, "Radxa GStreamer pipeline"))
+        video_capture.assert_not_called()
 
     def test_open_camera_tries_discovered_linux_video_devices(self) -> None:
         direct_capture = Mock()
@@ -102,6 +106,7 @@ class CameraTests(unittest.TestCase):
                 clear=False,
             ),
             patch("src.camera._radxa_device_paths", return_value=["/dev/video11", "/dev/video12"]),
+            patch("src.camera._open_gstreamer_camera", return_value=None) as open_gstreamer_camera,
             patch(
                 "src.camera.cv2.VideoCapture",
                 side_effect=[direct_capture, first_pipeline_capture, second_pipeline_capture],
@@ -109,7 +114,8 @@ class CameraTests(unittest.TestCase):
         ):
             camera = open_camera()
 
-        self.assertEqual(camera.source_name, "Radxa GStreamer pipeline (/dev/video11)")
+        self.assertEqual(camera.source_name, "Radxa GStreamer pipeline (/dev/video12)")
+        self.assertEqual(open_gstreamer_camera.call_count, 2)
         self.assertEqual(video_capture.call_args_list[1].args[1], CAP_GSTREAMER)
         self.assertIn("device=/dev/video11", video_capture.call_args_list[1].args[0])
         self.assertIn("device=/dev/video12", video_capture.call_args_list[2].args[0])
@@ -145,6 +151,7 @@ class CameraTests(unittest.TestCase):
             ),
             patch("src.camera._radxa_device_paths", return_value=["/dev/video11"]),
             patch("src.camera._linux_video_device_paths", return_value=["/dev/video11"]),
+            patch("src.camera._open_gstreamer_camera", return_value=None),
             patch("src.camera.cv2.VideoCapture", side_effect=[direct_capture, fallback_capture]),
         ):
             with self.assertRaisesRegex(RuntimeError, "Detected Linux video devices: /dev/video11"):
