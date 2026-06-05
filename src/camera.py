@@ -30,17 +30,17 @@ DEFAULT_RADXA_FRAMERATE = _int_env("ATTENDANCE_CAMERA_FRAMERATE", 30)
 class CameraStream:
     capture: object
     source_name: str
-    decode_i420: bool = False
+    decode_color_code: int | None = None
     pending_frame: object | None = None
 
     def _decode_frame(self, frame: object) -> object:
-        if not self.decode_i420:
+        if self.decode_color_code is None:
             return frame
 
         try:
-            return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
+            return cv2.cvtColor(frame, self.decode_color_code)
         except cv2.error as exc:
-            raise RuntimeError(f"Could not decode I420 frame from {self.source_name}.") from exc
+            raise RuntimeError(f"Could not decode frame from {self.source_name}.") from exc
 
     def read(self) -> tuple[bool, object]:
         if self.pending_frame is not None:
@@ -63,21 +63,25 @@ class _CameraCandidate:
     source: object
     source_name: str
     api_preference: int | None = None
-    decode_i420: bool = False
+    decode_color_code: int | None = None
 
 
-def _radxa_gstreamer_pipeline(device_path: str) -> str:
+def _radxa_gstreamer_pipeline(device_path: str, pixel_format: str) -> str:
     return (
         f"v4l2src device={device_path} en-awisp=1 en-largemode=0 ! "
-        f"video/x-raw,format=I420,width={DEFAULT_RADXA_WIDTH},height={DEFAULT_RADXA_HEIGHT},"
+        f"video/x-raw,format={pixel_format},width={DEFAULT_RADXA_WIDTH},height={DEFAULT_RADXA_HEIGHT},"
         f"framerate={DEFAULT_RADXA_FRAMERATE}/1 ! "
         "appsink drop=true sync=false"
     )
 
 
-def _pipeline_uses_i420(pipeline: str) -> bool:
+def _pipeline_color_code(pipeline: str) -> int | None:
     normalized = pipeline.replace(" ", "").upper()
-    return "FORMAT=I420" in normalized
+    if "FORMAT=NV12" in normalized:
+        return cv2.COLOR_YUV2BGR_NV12
+    if "FORMAT=I420" in normalized:
+        return cv2.COLOR_YUV2BGR_I420
+    return None
 
 
 def _linux_video_device_paths() -> list[str]:
@@ -123,19 +127,20 @@ def _camera_candidates() -> list[_CameraCandidate]:
                 source=pipeline_from_env,
                 source_name="Configured camera pipeline",
                 api_preference=CAP_GSTREAMER,
-                decode_i420=_pipeline_uses_i420(pipeline_from_env),
+                decode_color_code=_pipeline_color_code(pipeline_from_env),
             )
         )
 
     candidates.extend(
         [
             _CameraCandidate(
-                source=_radxa_gstreamer_pipeline(device_path),
-                source_name=f"Radxa GStreamer pipeline ({device_path})",
+                source=_radxa_gstreamer_pipeline(device_path, pixel_format),
+                source_name=f"Radxa GStreamer pipeline ({device_path}, {pixel_format})",
                 api_preference=CAP_GSTREAMER,
-                decode_i420=True,
+                decode_color_code=_pipeline_color_code(f"format={pixel_format}"),
             )
             for device_path in _camera_device_paths()
+            for pixel_format in ("NV12", "I420")
         ]
     )
     candidates.append(
@@ -165,7 +170,7 @@ def _open_candidate(candidate: _CameraCandidate) -> CameraStream | None:
     return CameraStream(
         capture=capture,
         source_name=candidate.source_name,
-        decode_i420=candidate.decode_i420,
+        decode_color_code=candidate.decode_color_code,
         pending_frame=frame,
     )
 
