@@ -20,8 +20,6 @@ function isTauriRuntime() {
 
 const DEFAULT_API_BASE_URL = isTauriRuntime() ? "http://127.0.0.1:8000" : "";
 const API_BASE_URL = (env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, "");
-const DEFAULT_FLASK_CAMERA_BASE_URL = "http://127.0.0.1:5051";
-const FLASK_CAMERA_BASE_URL = (env.VITE_FLASK_CAMERA_BASE_URL || DEFAULT_FLASK_CAMERA_BASE_URL).trim().replace(/\/+$/, "");
 const API_RETRY_COUNT = Math.max(
   1,
   Number.parseInt(env.VITE_API_RETRY_COUNT || (isTauriRuntime() ? "15" : "1"), 10) || 1,
@@ -47,13 +45,6 @@ function resolveRequestUrl(path) {
     return path;
   }
   return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
-}
-
-function resolveFlaskCameraUrl(path) {
-  if (/^https?:\/\//i.test(path)) {
-    return path;
-  }
-  return `${FLASK_CAMERA_BASE_URL}${path}`;
 }
 
 async function parseApiResponse(response, requestUrl) {
@@ -83,7 +74,7 @@ async function parseApiResponse(response, requestUrl) {
   const looksLikeHtml = contentType.includes("text/html") || trimmedText.startsWith("<");
   if (looksLikeHtml) {
     throw new ApiError(
-      "Expected JSON from the device service, but received HTML instead. Open the app from the backend URL on port 8000 or configure the frontend API base URL/proxy.",
+      "Expected JSON from the device service, but received HTML instead. Open the app from the active backend URL or configure the frontend API base URL/proxy.",
       response.status || 500,
     );
   }
@@ -223,26 +214,6 @@ export const apiClient = {
     }
     const suffix = search.toString();
     return resolveRequestUrl(`/api/v2/local-camera/frame${suffix ? `?${suffix}` : ""}`);
-  },
-  localCameraStreamUrl(token, cacheBust = "") {
-    const resolvedToken = resolveToken(token);
-    const search = new URLSearchParams();
-    if (resolvedToken) {
-      search.set("token", resolvedToken);
-    }
-    if (cacheBust) {
-      search.set("ts", String(cacheBust));
-    }
-    const suffix = search.toString();
-    return resolveRequestUrl(`/api/v2/local-camera/stream.mjpg${suffix ? `?${suffix}` : ""}`);
-  },
-  flaskCameraStreamUrl(cacheBust = "") {
-    const search = new URLSearchParams();
-    if (cacheBust) {
-      search.set("ts", String(cacheBust));
-    }
-    const suffix = search.toString();
-    return resolveFlaskCameraUrl(`/stream.mjpg${suffix ? `?${suffix}` : ""}`);
   },
   recognize(token, body) {
     return request("/api/v2/recognitions", {

@@ -4,7 +4,12 @@ import os
 import unittest
 from unittest.mock import patch
 
-from src.native_react_app import _get_backend_startup_timeout_seconds, _native_app_url, _wait_for_backend_ready
+from src.native_react_app import (
+    _get_backend_startup_timeout_seconds,
+    _get_native_backend_port,
+    _native_app_url,
+    _wait_for_backend_ready,
+)
 
 
 class _StubProcess:
@@ -20,6 +25,23 @@ class _StubProcess:
 class NativeReactAppTests(unittest.TestCase):
     def test_native_app_url_forces_backend_camera_mode(self) -> None:
         self.assertEqual(_native_app_url(), "http://127.0.0.1:8000/?camera_mode=backend")
+
+    def test_get_native_backend_port_uses_env_override(self) -> None:
+        with patch.dict(os.environ, {"ATTENDANCE_NATIVE_BACKEND_PORT": "8123"}, clear=False):
+            with patch("src.native_react_app._port_is_available", return_value=True):
+                self.assertEqual(_get_native_backend_port(), 8123)
+
+    def test_get_native_backend_port_uses_free_local_port_by_default(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ATTENDANCE_NATIVE_BACKEND_PORT", None)
+            with patch("src.native_react_app._find_free_local_port", return_value=8542):
+                self.assertEqual(_get_native_backend_port(), 8542)
+
+    def test_get_native_backend_port_rejects_busy_override(self) -> None:
+        with patch.dict(os.environ, {"ATTENDANCE_NATIVE_BACKEND_PORT": "8123"}, clear=False):
+            with patch("src.native_react_app._port_is_available", return_value=False):
+                with self.assertRaisesRegex(RuntimeError, "already in use"):
+                    _get_native_backend_port()
 
     def test_backend_startup_timeout_uses_default(self) -> None:
         with patch.dict(os.environ, {}, clear=False):

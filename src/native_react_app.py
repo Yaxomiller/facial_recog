@@ -96,6 +96,40 @@ def _native_app_url(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT) 
     return f"{_backend_base_url(host, port)}/?camera_mode=backend"
 
 
+def _port_is_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _find_free_local_port(host: str = DESKTOP_API_HOST) -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((host, 0))
+        return int(probe.getsockname()[1])
+
+
+def _get_native_backend_port(host: str = DESKTOP_API_HOST) -> int:
+    raw_port = os.getenv("ATTENDANCE_NATIVE_BACKEND_PORT", "").strip()
+    if not raw_port:
+        return _find_free_local_port(host)
+
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise RuntimeError("ATTENDANCE_NATIVE_BACKEND_PORT must be an integer.") from exc
+    if not 1 <= port <= 65535:
+        raise RuntimeError("ATTENDANCE_NATIVE_BACKEND_PORT must be between 1 and 65535.")
+    if not _port_is_available(host, port):
+        raise RuntimeError(
+            f"ATTENDANCE_NATIVE_BACKEND_PORT={port} is already in use on {host}. "
+            "Choose a different port or clear the override."
+        )
+    return port
+
+
 def _backend_socket_ready(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT) -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.2):
@@ -195,13 +229,10 @@ def _python_command_candidates() -> list[list[str]]:
     return candidates
 
 
-def _start_local_backend() -> subprocess.Popen[str] | None:
-    if _desktop_backend_ready():
-        return None
-
+def _start_local_backend(host: str, port: int) -> subprocess.Popen[str]:
     environment = os.environ.copy()
-    environment["ATTENDANCE_WEB_HOST"] = DESKTOP_API_HOST
-    environment["ATTENDANCE_WEB_PORT"] = str(DESKTOP_API_PORT)
+    environment["ATTENDANCE_WEB_HOST"] = host
+    environment["ATTENDANCE_WEB_PORT"] = str(port)
     environment["ATTENDANCE_OPEN_BROWSER_ON_START"] = "false"
     timeout_seconds = _get_backend_startup_timeout_seconds()
     last_exit_code: int | None = None
@@ -225,8 +256,12 @@ def _start_local_backend() -> subprocess.Popen[str] | None:
             last_spawn_error = exc
             continue
 
-        if _wait_for_backend_ready(timeout_seconds, backend_process=backend_process):
-            print(f"Offline native React backend started on {_backend_base_url()}/")
+        if _wait_for_backend_ready(
+            timeout_seconds,
+            backend_process=backend_process,
+            readiness_check=lambda: _desktop_backend_ready(host=host, port=port),
+        ):
+            print(f"Offline native React backend started on {_backend_base_url(host, port)}/")
             return backend_process
 
         exit_code = backend_process.poll()
@@ -234,7 +269,7 @@ def _start_local_backend() -> subprocess.Popen[str] | None:
             backend_process.kill()
             backend_process.wait(timeout=5)
             raise RuntimeError(
-                f"The local backend did not become healthy on {_backend_base_url()}/ within {timeout_seconds:.0f} seconds.\n"
+                f"The local backend did not become healthy on {_backend_base_url(host, port)}/ within {timeout_seconds:.0f} seconds.\n"
                 "If this machine is slow to initialize the face stack, try setting "
                 "`ATTENDANCE_BACKEND_STARTUP_TIMEOUT_SECONDS=90` before running `python app.py`.\n"
                 "You can also run `python api.py` once to confirm the backend starts normally."
@@ -259,7 +294,7 @@ def _start_local_backend() -> subprocess.Popen[str] | None:
         )
 
     raise RuntimeError(
-        f"The local backend could not start on {_backend_base_url()}/.\n"
+        f"The local backend could not start on {_backend_base_url(host, port)}/.\n"
         "Run `python api.py` once to check for backend dependency errors."
     )
 
@@ -285,14 +320,16 @@ def launch_native_react_app() -> None:
             "On Radxa/Debian, also install WebKitGTK support with: sudo apt install python3-gi gir1.2-webkit2-4.1"
         ) from exc
 
-    backend_process = _start_local_backend()
+    backend_host = DESKTOP_API_HOST
+    backend_port = _get_native_backend_port(backend_host)
+    backend_process = _start_local_backend(backend_host, backend_port)
     width = int(os.getenv("ATTENDANCE_APP_WIDTH", "430") or "430")
     height = int(os.getenv("ATTENDANCE_APP_HEIGHT", "932") or "932")
 
     try:
         webview.create_window(
             "Tresenso Face Attendance",
-            _native_app_url(),
+            _native_app_url(backend_host, backend_port),
             width=width,
             height=height,
             min_size=(390, 780),
