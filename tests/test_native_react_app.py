@@ -4,7 +4,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from src.native_react_app import _get_backend_startup_timeout_seconds, _wait_for_backend_ready
+from src.native_react_app import _get_backend_startup_timeout_seconds, _native_app_url, _wait_for_backend_ready
 
 
 class _StubProcess:
@@ -18,6 +18,9 @@ class _StubProcess:
 
 
 class NativeReactAppTests(unittest.TestCase):
+    def test_native_app_url_forces_backend_camera_mode(self) -> None:
+        self.assertEqual(_native_app_url(), "http://127.0.0.1:8000/?camera_mode=backend")
+
     def test_backend_startup_timeout_uses_default(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ATTENDANCE_BACKEND_STARTUP_TIMEOUT_SECONDS", None)

@@ -1,5 +1,8 @@
 import { apiClient } from "./api.js";
 
+const BACKEND_FRAME_INTERVAL_MS = 120;
+const BACKEND_FRAME_RETRY_DELAY_MS = 250;
+
 function mediaSize(media) {
   if (!media) {
     return { width: 0, height: 0 };
@@ -36,6 +39,19 @@ function clearImagePreview(imageRef) {
   }
 }
 
+function shouldForceBackendCamera() {
+  const search = globalThis.location?.search;
+  if (!search) {
+    return false;
+  }
+
+  try {
+    return new URLSearchParams(search).get("camera_mode") === "backend";
+  } catch {
+    return false;
+  }
+}
+
 export function stopStream(streamRef, videoRef, imageRef = null) {
   const session = streamRef.current;
   if (session?.mode === "backend") {
@@ -56,12 +72,12 @@ export function stopStream(streamRef, videoRef, imageRef = null) {
 }
 
 async function listVideoInputs() {
-  if (!navigator.mediaDevices?.enumerateDevices) {
+  if (!globalThis.navigator?.mediaDevices?.enumerateDevices) {
     return [];
   }
 
   try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
+    const devices = await globalThis.navigator.mediaDevices.enumerateDevices();
     return devices.filter((device) => device.kind === "videoinput");
   } catch {
     return [];
@@ -73,7 +89,7 @@ async function requestCameraStream(constraintsList, videoInputs) {
 
   for (const constraints of constraintsList) {
     try {
-      return await navigator.mediaDevices.getUserMedia(constraints);
+      return await globalThis.navigator.mediaDevices.getUserMedia(constraints);
     } catch (requestError) {
       lastError = requestError;
     }
@@ -81,7 +97,7 @@ async function requestCameraStream(constraintsList, videoInputs) {
 
   for (const device of videoInputs) {
     try {
-      return await navigator.mediaDevices.getUserMedia({
+      return await globalThis.navigator.mediaDevices.getUserMedia({
         video: {
           deviceId: { exact: device.deviceId },
         },
@@ -120,7 +136,7 @@ function normalizeCameraError(requestError, videoInputs) {
     return new Error("The browser found a camera, but the requested video mode is unsupported.");
   }
 
-  if (!navigator.mediaDevices?.getUserMedia) {
+  if (!globalThis.navigator?.mediaDevices?.getUserMedia) {
     return new Error(
       "This app shell does not expose browser camera access. The local backend camera bridge should be used instead.",
     );
@@ -216,7 +232,7 @@ function bindVideoStream(videoRef, imageRef, stream) {
   }
 }
 
-function bindImageStream(image, url) {
+function loadImageSource(image, url, errorMessage) {
   return new Promise((resolve, reject) => {
     const handleLoad = () => {
       cleanup();
@@ -224,7 +240,7 @@ function bindImageStream(image, url) {
     };
     const handleError = () => {
       cleanup();
-      reject(new Error("Could not load the local camera stream from the backend camera bridge."));
+      reject(new Error(errorMessage));
     };
     const cleanup = () => {
       image.removeEventListener("load", handleLoad);
@@ -244,20 +260,50 @@ async function startBackendCamera(token, videoRef, imageRef, streamRef) {
     throw new Error("The local camera preview element is unavailable.");
   }
 
-  const backendStatus = await apiClient.startLocalCamera(token);
-  await bindImageStream(
-    previewImage,
-    apiClient.localCameraStreamUrl(token, Date.now()),
-  );
+  const loadFrame = () =>
+    loadImageSource(
+      previewImage,
+      apiClient.localCameraFrameUrl(token, Date.now()),
+      "Could not load a frame from the local camera bridge.",
+    );
 
+  const backendStatus = await apiClient.startLocalCamera(token);
   const backendSession = {
     mode: "backend",
     stopRequested: false,
+    refreshTimer: null,
+    scheduleNextFrame(delay = BACKEND_FRAME_INTERVAL_MS) {
+      if (this.stopRequested) {
+        return;
+      }
+
+      this.refreshTimer = globalThis.setTimeout(async () => {
+        this.refreshTimer = null;
+        if (this.stopRequested) {
+          return;
+        }
+
+        try {
+          await loadFrame();
+          this.scheduleNextFrame(BACKEND_FRAME_INTERVAL_MS);
+        } catch (_loadError) {
+          if (this.stopRequested) {
+            return;
+          }
+          clearImagePreview(imageRef);
+          this.scheduleNextFrame(BACKEND_FRAME_RETRY_DELAY_MS);
+        }
+      }, delay);
+    },
     stop() {
       if (this.stopRequested) {
         return;
       }
       this.stopRequested = true;
+      if (this.refreshTimer !== null) {
+        globalThis.clearTimeout(this.refreshTimer);
+        this.refreshTimer = null;
+      }
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
@@ -266,7 +312,15 @@ async function startBackendCamera(token, videoRef, imageRef, streamRef) {
     },
   };
 
+  try {
+    await loadFrame();
+  } catch (loadError) {
+    backendSession.stop();
+    throw loadError;
+  }
+
   streamRef.current = backendSession;
+  backendSession.scheduleNextFrame();
   return {
     mode: "backend",
     sourceName: backendStatus?.source_name || "local-camera",
@@ -274,11 +328,13 @@ async function startBackendCamera(token, videoRef, imageRef, streamRef) {
 }
 
 export async function startUserCamera({ token, videoRef, imageRef, streamRef }) {
-  if (!navigator.mediaDevices?.getUserMedia) {
+  stopStream(streamRef, videoRef, imageRef);
+  if (shouldForceBackendCamera()) {
     return startBackendCamera(token, videoRef, imageRef, streamRef);
   }
-
-  stopStream(streamRef, videoRef, imageRef);
+  if (!globalThis.navigator?.mediaDevices?.getUserMedia) {
+    return startBackendCamera(token, videoRef, imageRef, streamRef);
+  }
 
   const videoInputs = await listVideoInputs();
 

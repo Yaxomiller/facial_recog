@@ -31,19 +31,28 @@ class CameraStream:
     capture: object
     source_name: str
     decode_i420: bool = False
+    pending_frame: object | None = None
+
+    def _decode_frame(self, frame: object) -> object:
+        if not self.decode_i420:
+            return frame
+
+        try:
+            return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
+        except cv2.error as exc:
+            raise RuntimeError(f"Could not decode I420 frame from {self.source_name}.") from exc
 
     def read(self) -> tuple[bool, object]:
+        if self.pending_frame is not None:
+            frame = self.pending_frame
+            self.pending_frame = None
+            return True, self._decode_frame(frame)
+
         ok, frame = self.capture.read()
-        if not ok:
+        if not ok or frame is None:
             return False, frame
 
-        if self.decode_i420:
-            try:
-                frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
-            except cv2.error as exc:
-                raise RuntimeError(f"Could not decode I420 frame from {self.source_name}.") from exc
-
-        return True, frame
+        return True, self._decode_frame(frame)
 
     def release(self) -> None:
         self.capture.release()
@@ -55,13 +64,6 @@ class _CameraCandidate:
     source_name: str
     api_preference: int | None = None
     decode_i420: bool = False
-
-
-def _truthy_env(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _radxa_gstreamer_pipeline(device_path: str) -> str:
@@ -92,57 +94,80 @@ def _linux_video_device_paths() -> list[str]:
     return [path for _index, path in sorted(discovered, key=lambda item: item[0])]
 
 
-def _radxa_device_paths() -> list[str]:
+def _camera_device_paths() -> list[str]:
     configured = os.getenv("ATTENDANCE_CAMERA_DEVICE", "").strip()
+    discovered = _linux_video_device_paths()
     if configured:
-        return [configured]
+        ordered = [configured]
+        ordered.extend(path for path in discovered if path != configured)
+        return ordered
+
+    if not Path("/dev").exists():
+        return []
 
     default_path = f"/dev/video{CAMERA_INDEX}"
-    discovered = _linux_video_device_paths()
     if not discovered:
         return [default_path]
-
     ordered = [default_path]
     ordered.extend(path for path in discovered if path != default_path)
     return ordered
 
 
 def _camera_candidates() -> list[_CameraCandidate]:
-    preferred_backend = os.getenv("ATTENDANCE_CAMERA_BACKEND", "auto").strip().lower() or "auto"
     pipeline_from_env = os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
 
-    direct_candidate = _CameraCandidate(
-        source=CAMERA_INDEX,
-        source_name=f"camera index {CAMERA_INDEX}",
-    )
-    radxa_candidates: list[_CameraCandidate]
+    candidates: list[_CameraCandidate] = []
     if pipeline_from_env:
-        radxa_candidates = [
+        candidates.append(
             _CameraCandidate(
                 source=pipeline_from_env,
-                source_name="Radxa GStreamer pipeline",
+                source_name="Configured camera pipeline",
                 api_preference=CAP_GSTREAMER,
-                decode_i420=_truthy_env("ATTENDANCE_CAMERA_PIPELINE_RAW_I420", _pipeline_uses_i420(pipeline_from_env)),
+                decode_i420=_pipeline_uses_i420(pipeline_from_env),
             )
-        ]
-    else:
-        radxa_candidates = [
+        )
+
+    candidates.extend(
+        [
             _CameraCandidate(
                 source=_radxa_gstreamer_pipeline(device_path),
                 source_name=f"Radxa GStreamer pipeline ({device_path})",
                 api_preference=CAP_GSTREAMER,
                 decode_i420=True,
             )
-            for device_path in _radxa_device_paths()
+            for device_path in _camera_device_paths()
         ]
+    )
+    candidates.append(
+        _CameraCandidate(
+            source=CAMERA_INDEX,
+            source_name=f"camera index {CAMERA_INDEX}",
+        )
+    )
+    return candidates
 
-    if preferred_backend in {"gstreamer", "radxa"}:
-        return [*radxa_candidates, direct_candidate]
-    if preferred_backend in {"direct", "index", "opencv"}:
-        return [direct_candidate]
-    if pipeline_from_env:
-        return [*radxa_candidates, direct_candidate]
-    return [direct_candidate, *radxa_candidates]
+
+def _open_candidate(candidate: _CameraCandidate) -> CameraStream | None:
+    if candidate.api_preference is None:
+        capture = cv2.VideoCapture(candidate.source)
+    else:
+        capture = cv2.VideoCapture(candidate.source, candidate.api_preference)
+
+    if not capture.isOpened():
+        capture.release()
+        return None
+
+    ok, frame = capture.read()
+    if not ok or frame is None:
+        capture.release()
+        return None
+
+    return CameraStream(
+        capture=capture,
+        source_name=candidate.source_name,
+        decode_i420=candidate.decode_i420,
+        pending_frame=frame,
+    )
 
 
 def open_camera() -> CameraStream:
@@ -150,26 +175,14 @@ def open_camera() -> CameraStream:
 
     for candidate in _camera_candidates():
         attempted_sources.append(candidate.source_name)
-
-        if candidate.api_preference is None:
-            capture = cv2.VideoCapture(candidate.source)
-        else:
-            capture = cv2.VideoCapture(candidate.source, candidate.api_preference)
-
-        if capture.isOpened():
-            return CameraStream(
-                capture=capture,
-                source_name=candidate.source_name,
-                decode_i420=candidate.decode_i420,
-            )
-
-        capture.release()
+        camera = _open_candidate(candidate)
+        if camera is not None:
+            return camera
 
     attempted = ", ".join(attempted_sources)
     raise RuntimeError(
         "Could not open webcam. "
         f"Tried {attempted}. "
         f"Detected Linux video devices: {', '.join(_linux_video_device_paths()) or 'none'}. "
-        "You can set ATTENDANCE_CAMERA_BACKEND=radxa to force the pipeline or "
-        "ATTENDANCE_CAMERA_DEVICE=/dev/videoX or ATTENDANCE_CAMERA_PIPELINE to override it."
+        "You can set ATTENDANCE_CAMERA_DEVICE=/dev/videoX or ATTENDANCE_CAMERA_PIPELINE to override it."
     )

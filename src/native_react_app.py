@@ -92,6 +92,10 @@ def _backend_base_url(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT
     return f"http://{host}:{port}"
 
 
+def _native_app_url(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT) -> str:
+    return f"{_backend_base_url(host, port)}/?camera_mode=backend"
+
+
 def _backend_socket_ready(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT) -> bool:
     try:
         with socket.create_connection((host, port), timeout=0.2):
@@ -288,7 +292,7 @@ def launch_native_react_app() -> None:
     try:
         webview.create_window(
             "Tresenso Face Attendance",
-            f"http://{DESKTOP_API_HOST}:{DESKTOP_API_PORT}/",
+            _native_app_url(),
             width=width,
             height=height,
             min_size=(390, 780),
