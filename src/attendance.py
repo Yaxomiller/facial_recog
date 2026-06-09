@@ -8,6 +8,7 @@ from typing import Optional
 from src.enrollment import enroll_person
 from src.exporter import export_attendance_to_excel, export_today
 from src.native_react_app import (
+    NativeShellUnavailable,
     ensure_react_frontend_built,
     get_react_frontend_build_stamp,
     launch_native_react_app,
@@ -56,11 +57,11 @@ def _launch_legacy_tk_app() -> None:
 
 
 def launch_lightweight_native_app() -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def launch_offline_native_react_app() -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def launch_default_app() -> None:
@@ -68,23 +69,23 @@ def launch_default_app() -> None:
 
 
 def handle_native(_: argparse.Namespace) -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def handle_desktop(_: argparse.Namespace) -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def handle_offline(_: argparse.Namespace) -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def handle_react(_: argparse.Namespace) -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def handle_native_react(_: argparse.Namespace) -> None:
-    launch_native_react_app()
+    _launch_native_with_browser_fallback()
 
 
 def handle_gui(_: argparse.Namespace) -> None:
@@ -151,6 +152,23 @@ def _open_frontend_window(url: str, browser_mode: str) -> None:
         webbrowser.open(url)
 
     threading.Timer(1.0, open_window).start()
+
+
+def _native_browser_fallback_enabled() -> bool:
+    value = os.getenv("ATTENDANCE_NATIVE_BROWSER_FALLBACK", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _launch_native_with_browser_fallback() -> None:
+    try:
+        launch_native_react_app()
+    except NativeShellUnavailable as exc:
+        if not _native_browser_fallback_enabled():
+            raise
+
+        print(str(exc))
+        print("Native shell unavailable. Falling back to the browser UI.")
+        launch_web_app(browser_mode="app")
 
 
 def launch_web_app(open_browser: bool = True, browser_mode: Optional[str] = None) -> None:

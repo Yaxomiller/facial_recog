@@ -23,6 +23,10 @@ DEFAULT_BACKEND_STARTUP_TIMEOUT_SECONDS = 45.0
 BACKEND_POLL_INTERVAL_SECONDS = 0.25
 
 
+class NativeShellUnavailable(RuntimeError):
+    """Raised when the embedded pywebview shell cannot start on this machine."""
+
+
 def _latest_modified_at(paths: list[Path]) -> float:
     latest = 0.0
     for path in paths:
@@ -315,7 +319,7 @@ def launch_native_react_app() -> None:
     try:
         import webview
     except ImportError as exc:
-        raise RuntimeError(
+        raise NativeShellUnavailable(
             "The offline native React shell requires pywebview.\n"
             "Install it with: pip install pywebview\n"
             "On Radxa/Debian, also install WebKitGTK support with: sudo apt install python3-gi gir1.2-webkit2-4.1"
@@ -340,12 +344,12 @@ def launch_native_react_app() -> None:
     except Exception as exc:
         message = str(exc).lower()
         if "webkit" in message or "gtk" in message:
-            raise RuntimeError(
+            raise NativeShellUnavailable(
                 "The offline native React shell needs the system WebKit/GTK runtime.\n"
                 "On Radxa/Debian, install it with: sudo apt install python3-gi gir1.2-webkit2-4.1 libwebkit2gtk-4.1-0"
             ) from exc
         if "display" in message:
-            raise RuntimeError(
+            raise NativeShellUnavailable(
                 "The offline native React shell needs a graphical desktop session.\n"
                 "On Radxa, start it from the device desktop or an X11 session."
             ) from exc
