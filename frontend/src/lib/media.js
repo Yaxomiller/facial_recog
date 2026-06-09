@@ -39,110 +39,17 @@ function clearImagePreview(imageRef) {
   }
 }
 
-function shouldForceBackendCamera() {
-  const search = globalThis.location?.search;
-  if (!search) {
-    return false;
-  }
-
-  try {
-    return new URLSearchParams(search).get("camera_mode") === "backend";
-  } catch {
-    return false;
-  }
-}
-
 export function stopStream(streamRef, videoRef, imageRef = null) {
   const session = streamRef.current;
-  if (session?.mode === "backend") {
+  if (session?.stop) {
     session.stop();
-    streamRef.current = null;
-  } else if (session?.mode === "browser") {
-    session.stream.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-  } else if (streamRef.current) {
-    streamRef.current.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
   }
+  streamRef.current = null;
 
-  if (videoRef.current) {
+  if (videoRef?.current) {
     videoRef.current.srcObject = null;
   }
   clearImagePreview(imageRef);
-}
-
-async function listVideoInputs() {
-  if (!globalThis.navigator?.mediaDevices?.enumerateDevices) {
-    return [];
-  }
-
-  try {
-    const devices = await globalThis.navigator.mediaDevices.enumerateDevices();
-    return devices.filter((device) => device.kind === "videoinput");
-  } catch {
-    return [];
-  }
-}
-
-async function requestCameraStream(constraintsList, videoInputs) {
-  let lastError = null;
-
-  for (const constraints of constraintsList) {
-    try {
-      return await globalThis.navigator.mediaDevices.getUserMedia(constraints);
-    } catch (requestError) {
-      lastError = requestError;
-    }
-  }
-
-  for (const device of videoInputs) {
-    try {
-      return await globalThis.navigator.mediaDevices.getUserMedia({
-        video: {
-          deviceId: { exact: device.deviceId },
-        },
-        audio: false,
-      });
-    } catch (requestError) {
-      lastError = requestError;
-    }
-  }
-
-  throw lastError ?? new Error("Camera could not be started.");
-}
-
-function normalizeCameraError(requestError, videoInputs) {
-  const name = requestError instanceof Error ? requestError.name : "";
-  const message = requestError instanceof Error ? requestError.message : "Camera could not be started.";
-  const deviceSummary = videoInputs.length
-    ? ` Browser sees ${videoInputs.length} video input device${videoInputs.length === 1 ? "" : "s"}.`
-    : " Browser does not currently expose any video input devices.";
-
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    return new Error("Camera permission was denied. Allow camera access in the browser and try again.");
-  }
-
-  if (name === "NotReadableError") {
-    return new Error("The camera exists but is busy or unavailable to the browser. Close other apps using the camera and try again.");
-  }
-
-  if (name === "NotFoundError" || /requested device not found/i.test(message)) {
-    return new Error(
-      `No browser-accessible camera was found.${deviceSummary} The app will try the local backend camera bridge instead.`,
-    );
-  }
-
-  if (name === "OverconstrainedError") {
-    return new Error("The browser found a camera, but the requested video mode is unsupported.");
-  }
-
-  if (!globalThis.navigator?.mediaDevices?.getUserMedia) {
-    return new Error(
-      "This app shell does not expose browser camera access. The local backend camera bridge should be used instead.",
-    );
-  }
-
-  return new Error(`${message}${deviceSummary}`);
 }
 
 export function stopLive(timerRef, streamRef, videoRef, imageRef = null) {
@@ -207,7 +114,7 @@ export function frameToBlob(media, canvas, options = {}) {
   } = options;
   const { width, height } = resolveFrameSize(media, maxWidth, maxHeight);
   if (!width || !height) {
-    return Promise.reject(new Error("Could not capture the current video frame."));
+    return Promise.reject(new Error("Could not capture the current camera frame."));
   }
 
   canvas.width = width;
@@ -217,19 +124,12 @@ export function frameToBlob(media, canvas, options = {}) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       if (!blob) {
-        reject(new Error("Could not capture the current video frame."));
+        reject(new Error("Could not capture the current camera frame."));
         return;
       }
       resolve(blob);
     }, type, quality);
   });
-}
-
-function bindVideoStream(videoRef, imageRef, stream) {
-  clearImagePreview(imageRef);
-  if (videoRef.current) {
-    videoRef.current.srcObject = stream;
-  }
 }
 
 function loadImageSource(image, url, errorMessage) {
@@ -254,17 +154,17 @@ function loadImageSource(image, url, errorMessage) {
   });
 }
 
-async function startBackendCamera(token, videoRef, imageRef, streamRef) {
+async function startBackendCamera(token, imageRef, streamRef) {
   const previewImage = imageRef?.current;
   if (!previewImage) {
-    throw new Error("The local camera preview element is unavailable.");
+    throw new Error("The camera preview element is unavailable.");
   }
 
   const loadFrame = () =>
     loadImageSource(
       previewImage,
       apiClient.localCameraFrameUrl(token, Date.now()),
-      "Could not load a frame from the local camera bridge.",
+      "Could not load a frame from the camera service.",
     );
 
   const backendStatus = await apiClient.startLocalCamera(token);
@@ -304,9 +204,6 @@ async function startBackendCamera(token, videoRef, imageRef, streamRef) {
         globalThis.clearTimeout(this.refreshTimer);
         this.refreshTimer = null;
       }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
       clearImagePreview(imageRef);
       void apiClient.stopLocalCamera(token).catch(() => {});
     },
@@ -323,69 +220,11 @@ async function startBackendCamera(token, videoRef, imageRef, streamRef) {
   backendSession.scheduleNextFrame();
   return {
     mode: "backend",
-    sourceName: backendStatus?.source_name || "local-camera",
+    sourceName: backendStatus?.source_name || "gstreamer-camera",
   };
 }
 
-export async function startUserCamera({ token, videoRef, imageRef, streamRef }) {
+export async function startUserCamera({ token, imageRef, streamRef, videoRef = null }) {
   stopStream(streamRef, videoRef, imageRef);
-  if (shouldForceBackendCamera()) {
-    return startBackendCamera(token, videoRef, imageRef, streamRef);
-  }
-  if (!globalThis.navigator?.mediaDevices?.getUserMedia) {
-    return startBackendCamera(token, videoRef, imageRef, streamRef);
-  }
-
-  const videoInputs = await listVideoInputs();
-
-  try {
-    const stream = await requestCameraStream(
-      [
-        {
-          video: {
-            facingMode: { ideal: "user" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 30 },
-          },
-          audio: false,
-        },
-        {
-          video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 30 },
-          },
-          audio: false,
-        },
-        {
-          video: true,
-          audio: false,
-        },
-      ],
-      videoInputs,
-    );
-
-    streamRef.current = {
-      mode: "browser",
-      stream,
-    };
-    bindVideoStream(videoRef, imageRef, stream);
-    if (videoRef.current) {
-      try {
-        await videoRef.current.play();
-      } catch {
-        // Some browser shells autoplay the stream without requiring an explicit play call.
-      }
-    }
-    return { mode: "browser" };
-  } catch (requestError) {
-    try {
-      return await startBackendCamera(token, videoRef, imageRef, streamRef);
-    } catch (backendError) {
-      const browserError = normalizeCameraError(requestError, videoInputs);
-      const backendMessage = backendError instanceof Error ? backendError.message : "The local camera bridge could not be started.";
-      throw new Error(`${browserError.message} Local camera bridge error: ${backendMessage}`);
-    }
-  }
+  return startBackendCamera(token, imageRef, streamRef);
 }

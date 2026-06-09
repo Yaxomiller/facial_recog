@@ -520,7 +520,7 @@ def local_camera_status(_: SessionState = Depends(require_auth)) -> LocalCameraS
     return LocalCameraSessionResponse(
         ok=True,
         running=local_camera_proxy.is_running(),
-        mode="backend-proxy",
+        mode="backend",
         source_name=local_camera_proxy.source_name(),
         frame_path="/api/v2/local-camera/frame",
     )
@@ -536,7 +536,7 @@ def start_local_camera(_: SessionState = Depends(require_auth)) -> LocalCameraSe
     return LocalCameraSessionResponse(
         ok=True,
         running=True,
-        mode="backend-proxy",
+        mode="backend",
         source_name=source_name,
         frame_path="/api/v2/local-camera/frame",
     )

@@ -23,8 +23,8 @@ class _StubProcess:
 
 
 class NativeReactAppTests(unittest.TestCase):
-    def test_native_app_url_forces_backend_camera_mode(self) -> None:
-        self.assertEqual(_native_app_url(), "http://127.0.0.1:8000/?camera_mode=backend")
+    def test_native_app_url_points_to_backend_root(self) -> None:
+        self.assertEqual(_native_app_url(), "http://127.0.0.1:8000/")
 
     def test_get_native_backend_port_uses_env_override(self) -> None:
         with patch.dict(os.environ, {"ATTENDANCE_NATIVE_BACKEND_PORT": "8123"}, clear=False):

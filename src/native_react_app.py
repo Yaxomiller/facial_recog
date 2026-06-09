@@ -93,7 +93,7 @@ def _backend_base_url(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT
 
 
 def _native_app_url(host: str = DESKTOP_API_HOST, port: int = DESKTOP_API_PORT) -> str:
-    return f"{_backend_base_url(host, port)}/?camera_mode=backend"
+    return f"{_backend_base_url(host, port)}/"
 
 
 def _port_is_available(host: str, port: int) -> bool:

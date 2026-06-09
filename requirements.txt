@@ -2,7 +2,6 @@ opencv-contrib-python==4.11.0.86
 numpy==1.26.4
 openpyxl==3.1.5
 fastapi==0.115.12
-Flask==3.1.1
 uvicorn==0.34.0
 python-multipart==0.0.20
 mediapipe==0.10.14

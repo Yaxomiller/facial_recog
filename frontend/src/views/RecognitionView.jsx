@@ -17,12 +17,10 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   const [identifiedMatch, setIdentifiedMatch] = useState(null);
   const [breathResult, setBreathResult] = useState(null);
   const [running, setRunning] = useState(false);
-  const [cameraMode, setCameraMode] = useState(null);
   const [exhaling, setExhaling] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [lastUnknown, setLastUnknown] = useState(false);
   const [lastReason, setLastReason] = useState("");
-  const videoRef = useRef(null);
   const imageRef = useRef(null);
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
@@ -50,11 +48,11 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
     clearExhaleTimer();
     clearExhaleCheckTimer();
     void cancelActiveBreathSession();
-    stopLive(timerRef, streamRef, videoRef, imageRef);
+    stopLive(timerRef, streamRef, null, imageRef);
   }, []);
 
   function activeMediaElement() {
-    return cameraMode === "backend" ? imageRef.current : videoRef.current;
+    return imageRef.current;
   }
 
   function clearScanTimer() {
@@ -365,18 +363,12 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
       setExhaleState(false);
       clearRecognitionFailure();
       setRunning(true);
-      const session = await startUserCamera({
+      await startUserCamera({
         token,
-        videoRef,
         imageRef,
         streamRef,
       });
-      setCameraMode(session.mode);
-      setMessage(
-        session.mode === "backend"
-          ? "Local camera bridge started. Hold the face steady and look at the screen."
-          : "Camera started. Hold the face steady and look at the screen.",
-      );
+      setMessage("Camera started. Hold the face steady and look at the screen.");
       startScanLoop();
     } catch (requestError) {
       setRunning(false);
@@ -488,7 +480,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
         setExhaleState(false);
         if (!exhaleCancelledRef.current) {
           drawBoxes(overlayRef.current, activeMediaElement(), []);
-          stopLive(timerRef, streamRef, videoRef, imageRef);
+          stopLive(timerRef, streamRef, null, imageRef);
           setRunning(false);
         }
       }
@@ -501,7 +493,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
     void cancelActiveBreathSession();
     exhaleCancelledRef.current = true;
     resetScanProgress();
-    stopLive(timerRef, streamRef, videoRef, imageRef);
+    stopLive(timerRef, streamRef, null, imageRef);
     requestInFlightRef.current = false;
     drawBoxes(overlayRef.current, activeMediaElement(), []);
     storeIdentifiedMatch(null);
@@ -510,7 +502,6 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
     setExhaleState(false);
     clearRecognitionFailure();
     setRunning(false);
-    setCameraMode(null);
     setMessage("Scan stopped.");
   }
 
@@ -528,8 +519,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
       >
         <div className="alert info">{message}</div>
         <div className="video-frame">
-          <video ref={videoRef} autoPlay playsInline muted hidden={cameraMode === "backend"} />
-          <img ref={imageRef} alt="Camera preview" crossOrigin="anonymous" hidden={cameraMode !== "backend"} />
+          <img ref={imageRef} alt="Camera preview" crossOrigin="anonymous" />
           <canvas ref={overlayRef} className="overlay-canvas" />
           <canvas ref={canvasRef} hidden />
         </div>

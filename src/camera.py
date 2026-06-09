@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from pathlib import Path
 
 import cv2
+import numpy as np
 
 from src.config import CAMERA_INDEX
 
@@ -20,174 +19,221 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-CAP_GSTREAMER = getattr(cv2, "CAP_GSTREAMER", 1800)
-DEFAULT_RADXA_WIDTH = _int_env("ATTENDANCE_CAMERA_WIDTH", 1920)
-DEFAULT_RADXA_HEIGHT = _int_env("ATTENDANCE_CAMERA_HEIGHT", 1080)
-DEFAULT_RADXA_FRAMERATE = _int_env("ATTENDANCE_CAMERA_FRAMERATE", 30)
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+
+    try:
+        return float(value.strip())
+    except ValueError:
+        return default
 
 
-@dataclass
+def _rotate_enabled() -> bool:
+    value = os.getenv("ATTENDANCE_CAMERA_ROTATE_180", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _flip_code() -> int | None:
+    value = os.getenv("ATTENDANCE_CAMERA_FLIP_CODE", "1").strip().lower()
+    if not value or value in {"none", "off", "disable", "disabled"}:
+        return None
+
+    try:
+        return int(value)
+    except ValueError:
+        return 1
+
+
+DEFAULT_DEVICE = f"/dev/video{CAMERA_INDEX}"
+
+
+def _default_device_path() -> str:
+    return os.getenv("ATTENDANCE_CAMERA_DEVICE", DEFAULT_DEVICE).strip() or DEFAULT_DEVICE
+
+
+def _default_width() -> int:
+    return _int_env("ATTENDANCE_CAMERA_WIDTH", 1920)
+
+
+def _default_height() -> int:
+    return _int_env("ATTENDANCE_CAMERA_HEIGHT", 1080)
+
+
+def _default_framerate() -> int:
+    return _int_env("ATTENDANCE_CAMERA_FRAMERATE", 60)
+
+
+def _default_timeout_seconds() -> float:
+    return max(0.1, _float_env("ATTENDANCE_CAMERA_TIMEOUT_SECONDS", 1.0))
+
+
+def _default_rotate_code() -> int | None:
+    return cv2.ROTATE_180 if _rotate_enabled() else None
+
+
+def _default_flip_code() -> int | None:
+    return _flip_code()
+
+_GST = None
+
+
+def _load_gst():
+    global _GST
+    if _GST is not None:
+        return _GST
+
+    try:
+        import gi
+
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst
+    except (ImportError, ValueError) as exc:
+        raise RuntimeError(
+            "The camera backend now uses GStreamer directly.\n"
+            "On Radxa/Debian install: sudo apt install python3-gi gir1.2-gstreamer-1.0"
+        ) from exc
+
+    Gst.init(None)
+    _GST = Gst
+    return Gst
+
+
+def _build_pipeline_description(device_path: str, width: int, height: int, framerate: int) -> str:
+    configured_pipeline = os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
+    if configured_pipeline:
+        return configured_pipeline
+
+    return (
+        f"v4l2src device={device_path} "
+        "en-awisp=1 en-largemode=0 ! "
+        f"video/x-raw,format=I420,width={width},height={height},framerate={framerate}/1 ! "
+        "appsink name=sink emit-signals=true max-buffers=1 drop=true"
+    )
+
+
 class CameraStream:
-    capture: object
-    source_name: str
-    decode_color_code: int | None = None
-    pending_frame: object | None = None
+    def __init__(
+        self,
+        *,
+        device_path: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        framerate: int | None = None,
+        timeout_seconds: float | None = None,
+        rotate_code: int | None = None,
+        flip_code: int | None = None,
+    ) -> None:
+        resolved_device_path = device_path or _default_device_path()
+        resolved_width = width if width is not None else _default_width()
+        resolved_height = height if height is not None else _default_height()
+        resolved_framerate = framerate if framerate is not None else _default_framerate()
+        resolved_timeout_seconds = timeout_seconds if timeout_seconds is not None else _default_timeout_seconds()
+        resolved_rotate_code = rotate_code if rotate_code is not None else _default_rotate_code()
+        resolved_flip_code = flip_code if flip_code is not None else _default_flip_code()
 
-    def _decode_frame(self, frame: object) -> object:
-        if self.decode_color_code is None:
-            return frame
+        self.device_path = resolved_device_path
+        self.width = resolved_width
+        self.height = resolved_height
+        self.framerate = resolved_framerate
+        self.timeout_seconds = max(0.1, resolved_timeout_seconds)
+        self.rotate_code = resolved_rotate_code
+        self.flip_code = resolved_flip_code
+        self.pipeline_description = _build_pipeline_description(
+            resolved_device_path,
+            resolved_width,
+            resolved_height,
+            resolved_framerate,
+        )
+        self.source_name = (
+            "Configured GStreamer pipeline"
+            if os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
+            else f"GStreamer pipeline ({resolved_device_path})"
+        )
+        self._gst = None
+        self._pipeline = None
+        self._sink = None
+
+    def start(self) -> CameraStream:
+        if self._pipeline is not None and self._sink is not None:
+            return self
+
+        gst = _load_gst()
+        try:
+            pipeline = gst.parse_launch(self.pipeline_description)
+        except Exception as exc:
+            raise RuntimeError(f"Could not create the camera pipeline for {self.source_name}.") from exc
+
+        sink = pipeline.get_by_name("sink")
+        if sink is None:
+            pipeline.set_state(gst.State.NULL)
+            raise RuntimeError("The configured camera pipeline does not expose an appsink named 'sink'.")
+
+        pipeline.set_state(gst.State.PLAYING)
+        self._gst = gst
+        self._pipeline = pipeline
+        self._sink = sink
+        return self
+
+    def _pull_sample(self):
+        if self._gst is None or self._sink is None:
+            raise RuntimeError("Camera has not been started.")
+
+        timeout_ns = max(1, int(self.timeout_seconds * int(self._gst.SECOND)))
+        return self._sink.emit("try-pull-sample", timeout_ns)
+
+    def get_frame(self):
+        sample = self._pull_sample()
+        if sample is None:
+            return None
+
+        buffer = sample.get_buffer()
+        success, mapinfo = buffer.map(self._gst.MapFlags.READ)
+        if not success:
+            return None
 
         try:
-            return cv2.cvtColor(frame, self.decode_color_code)
-        except cv2.error as exc:
-            raise RuntimeError(f"Could not decode frame from {self.source_name}.") from exc
+            data = np.frombuffer(mapinfo.data, dtype=np.uint8)
+            expected_rows = self.height * 3 // 2
+            expected_size = expected_rows * self.width
+            if data.size != expected_size:
+                raise RuntimeError(
+                    f"Camera returned an unexpected frame size for {self.source_name}. "
+                    f"Expected {expected_size} bytes, received {data.size}."
+                )
+
+            frame = data.reshape((expected_rows, self.width))
+            decoded = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
+            if self.rotate_code is not None:
+                decoded = cv2.rotate(decoded, self.rotate_code)
+            if self.flip_code is not None:
+                decoded = cv2.flip(decoded, self.flip_code)
+            return decoded
+        finally:
+            buffer.unmap(mapinfo)
 
     def read(self) -> tuple[bool, object]:
-        if self.pending_frame is not None:
-            frame = self.pending_frame
-            self.pending_frame = None
-            return True, self._decode_frame(frame)
+        frame = self.get_frame()
+        if frame is None:
+            return False, None
+        return True, frame
 
-        ok, frame = self.capture.read()
-        if not ok or frame is None:
-            return False, frame
+    def stop(self) -> None:
+        if self._pipeline is None or self._gst is None:
+            self._sink = None
+            return
 
-        return True, self._decode_frame(frame)
+        self._pipeline.set_state(self._gst.State.NULL)
+        self._pipeline = None
+        self._sink = None
+        self._gst = None
 
     def release(self) -> None:
-        self.capture.release()
-
-
-@dataclass(frozen=True)
-class _CameraCandidate:
-    source: object
-    source_name: str
-    api_preference: int | None = None
-    decode_color_code: int | None = None
-
-
-def _radxa_gstreamer_pipeline(device_path: str, pixel_format: str) -> str:
-    return (
-        f"v4l2src device={device_path} en-awisp=1 en-largemode=0 ! "
-        f"video/x-raw,format={pixel_format},width={DEFAULT_RADXA_WIDTH},height={DEFAULT_RADXA_HEIGHT},"
-        f"framerate={DEFAULT_RADXA_FRAMERATE}/1 ! "
-        "appsink drop=true sync=false"
-    )
-
-
-def _pipeline_color_code(pipeline: str) -> int | None:
-    normalized = pipeline.replace(" ", "").upper()
-    if "FORMAT=NV12" in normalized:
-        return cv2.COLOR_YUV2BGR_NV12
-    if "FORMAT=I420" in normalized:
-        return cv2.COLOR_YUV2BGR_I420
-    return None
-
-
-def _linux_video_device_paths() -> list[str]:
-    dev_root = Path("/dev")
-    if not dev_root.exists():
-        return []
-
-    discovered: list[tuple[int, str]] = []
-    for path in dev_root.glob("video*"):
-        suffix = path.name.removeprefix("video")
-        if suffix.isdigit():
-            discovered.append((int(suffix), str(path)))
-
-    return [path for _index, path in sorted(discovered, key=lambda item: item[0])]
-
-
-def _camera_device_paths() -> list[str]:
-    configured = os.getenv("ATTENDANCE_CAMERA_DEVICE", "").strip()
-    discovered = _linux_video_device_paths()
-    if configured:
-        ordered = [configured]
-        ordered.extend(path for path in discovered if path != configured)
-        return ordered
-
-    if not Path("/dev").exists():
-        return []
-
-    default_path = f"/dev/video{CAMERA_INDEX}"
-    if not discovered:
-        return [default_path]
-    ordered = [default_path]
-    ordered.extend(path for path in discovered if path != default_path)
-    return ordered
-
-
-def _camera_candidates() -> list[_CameraCandidate]:
-    pipeline_from_env = os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
-
-    candidates: list[_CameraCandidate] = []
-    if pipeline_from_env:
-        candidates.append(
-            _CameraCandidate(
-                source=pipeline_from_env,
-                source_name="Configured camera pipeline",
-                api_preference=CAP_GSTREAMER,
-                decode_color_code=_pipeline_color_code(pipeline_from_env),
-            )
-        )
-
-    candidates.extend(
-        [
-            _CameraCandidate(
-                source=_radxa_gstreamer_pipeline(device_path, pixel_format),
-                source_name=f"Radxa GStreamer pipeline ({device_path}, {pixel_format})",
-                api_preference=CAP_GSTREAMER,
-                decode_color_code=_pipeline_color_code(f"format={pixel_format}"),
-            )
-            for device_path in _camera_device_paths()
-            for pixel_format in ("NV12", "I420")
-        ]
-    )
-    candidates.append(
-        _CameraCandidate(
-            source=CAMERA_INDEX,
-            source_name=f"camera index {CAMERA_INDEX}",
-        )
-    )
-    return candidates
-
-
-def _open_candidate(candidate: _CameraCandidate) -> CameraStream | None:
-    if candidate.api_preference is None:
-        capture = cv2.VideoCapture(candidate.source)
-    else:
-        capture = cv2.VideoCapture(candidate.source, candidate.api_preference)
-
-    if not capture.isOpened():
-        capture.release()
-        return None
-
-    ok, frame = capture.read()
-    if not ok or frame is None:
-        capture.release()
-        return None
-
-    return CameraStream(
-        capture=capture,
-        source_name=candidate.source_name,
-        decode_color_code=candidate.decode_color_code,
-        pending_frame=frame,
-    )
+        self.stop()
 
 
 def open_camera() -> CameraStream:
-    attempted_sources: list[str] = []
-
-    for candidate in _camera_candidates():
-        attempted_sources.append(candidate.source_name)
-        camera = _open_candidate(candidate)
-        if camera is not None:
-            return camera
-
-    attempted = ", ".join(attempted_sources)
-    raise RuntimeError(
-        "Could not open webcam. "
-        f"Tried {attempted}. "
-        f"Detected Linux video devices: {', '.join(_linux_video_device_paths()) or 'none'}. "
-        "You can set ATTENDANCE_CAMERA_DEVICE=/dev/videoX or ATTENDANCE_CAMERA_PIPELINE to override it."
-    )
+    camera = CameraStream()
+    camera.start()
+    return camera
