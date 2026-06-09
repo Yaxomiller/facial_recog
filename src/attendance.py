@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Optional
+import sys
+from typing import Callable, Optional
 
 from src.enrollment import enroll_person
 from src.exporter import export_attendance_to_excel, export_today
@@ -14,6 +15,7 @@ from src.native_react_app import (
     launch_native_react_app,
 )
 from src.recognition import recognize_and_mark
+from src.tauri_react_app import launch_tauri_react_app
 from src.training import train_model
 from src.web_config import get_browser_host, get_web_host, get_web_port
 
@@ -159,9 +161,44 @@ def _native_browser_fallback_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
+def _preferred_native_shell() -> str:
+    configured = os.getenv("ATTENDANCE_NATIVE_SHELL", "").strip().lower()
+    if configured in {"tauri", "pywebview"}:
+        return configured
+    if sys.platform.startswith("linux"):
+        return "tauri"
+    return "pywebview"
+
+
+def _native_shell_launchers() -> list[tuple[str, Callable[[], None]]]:
+    if _preferred_native_shell() == "tauri":
+        return [
+            ("Tauri", launch_tauri_react_app),
+            ("pywebview", launch_native_react_app),
+        ]
+    return [
+        ("pywebview", launch_native_react_app),
+        ("Tauri", launch_tauri_react_app),
+    ]
+
+
+def _launch_preferred_native_shell() -> None:
+    errors: list[str] = []
+    for shell_name, launcher in _native_shell_launchers():
+        try:
+            launcher()
+            return
+        except NativeShellUnavailable as exc:
+            errors.append(f"{shell_name}: {exc}")
+
+    if errors:
+        raise NativeShellUnavailable("\n\n".join(errors))
+    raise NativeShellUnavailable("No supported native desktop shell is available.")
+
+
 def _launch_native_with_browser_fallback() -> None:
     try:
-        launch_native_react_app()
+        _launch_preferred_native_shell()
     except NativeShellUnavailable as exc:
         if not _native_browser_fallback_enabled():
             raise
@@ -243,21 +280,33 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--end-date", default="", help="End date in YYYY-MM-DD format")
     export_parser.set_defaults(handler=handle_export)
 
-    offline_parser = subparsers.add_parser("offline", help="Launch the same operator app inside a lightweight native webview")
+    offline_parser = subparsers.add_parser(
+        "offline",
+        help="Launch the operator app in the native desktop shell",
+    )
     offline_parser.set_defaults(handler=handle_offline)
 
-    native_parser = subparsers.add_parser("native", help="Launch the same operator app inside a lightweight native webview")
+    native_parser = subparsers.add_parser(
+        "native",
+        help="Launch the operator app in the native desktop shell",
+    )
     native_parser.set_defaults(handler=handle_native)
 
-    desktop_parser = subparsers.add_parser("desktop", help="Launch the same operator app inside a lightweight native webview")
+    desktop_parser = subparsers.add_parser(
+        "desktop",
+        help="Launch the operator app in the native desktop shell",
+    )
     desktop_parser.set_defaults(handler=handle_desktop)
 
-    react_parser = subparsers.add_parser("react", help="Launch the same operator React app inside a lightweight native webview")
+    react_parser = subparsers.add_parser(
+        "react",
+        help="Launch the operator app in the native desktop shell",
+    )
     react_parser.set_defaults(handler=handle_react)
 
     native_react_parser = subparsers.add_parser(
         "native-react",
-        help="Launch the same operator React app inside a lightweight native webview",
+        help="Launch the operator app in the native desktop shell",
     )
     native_react_parser.set_defaults(handler=handle_native_react)
 
