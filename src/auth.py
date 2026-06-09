@@ -10,6 +10,7 @@ import re
 import secrets
 import sqlite3
 import smtplib
+from typing import Optional
 
 import bcrypt
 
@@ -47,7 +48,7 @@ class AuthStatus:
     email_recovery_enabled: bool
 
 
-def _first_env(keys: tuple[str, ...]) -> str | None:
+def _first_env(keys: tuple[str, ...]) -> Optional[str]:
     for key in keys:
         value = os.getenv(key)
         if value:
@@ -66,7 +67,7 @@ def _truthy_env(key: str, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _email_settings() -> EmailSettings | None:
+def _email_settings() -> Optional[EmailSettings]:
     host = os.getenv("ATTENDANCE_SMTP_HOST", "").strip()
     port_text = os.getenv("ATTENDANCE_SMTP_PORT", "").strip() or ("465" if _truthy_env("ATTENDANCE_SMTP_USE_SSL", False) else "587")
     from_email = os.getenv("ATTENDANCE_SMTP_FROM_EMAIL", "").strip()
@@ -130,7 +131,7 @@ def _initialize_auth_store() -> None:
         )
 
 
-def _fetch_local_credentials() -> sqlite3.Row | None:
+def _fetch_local_credentials() -> Optional[sqlite3.Row]:
     _initialize_auth_store()
     with get_connection() as connection:
         return connection.execute(
@@ -142,21 +143,21 @@ def _fetch_local_credentials() -> sqlite3.Row | None:
         ).fetchone()
 
 
-def _env_admin_username() -> str | None:
+def _env_admin_username() -> Optional[str]:
     return _first_env(USERNAME_ENV_KEYS)
 
 
-def _env_admin_password_hash() -> bytes | None:
+def _env_admin_password_hash() -> Optional[bytes]:
     value = _first_env(PASSWORD_HASH_ENV_KEYS)
     return value.encode("utf-8") if value else None
 
 
-def _env_admin_email() -> str | None:
+def _env_admin_email() -> Optional[str]:
     value = _first_env(EMAIL_ENV_KEYS)
     return _normalize_email(value) if value else None
 
 
-def _is_valid_bcrypt_hash(password_hash: bytes | None) -> bool:
+def _is_valid_bcrypt_hash(password_hash: Optional[bytes]) -> bool:
     return bool(password_hash and password_hash.startswith((b"$2a$", b"$2b$", b"$2y$")))
 
 
@@ -196,7 +197,7 @@ def _validate_password(password: str) -> None:
         raise ValueError("Password must " + ", ".join(errors) + ".")
 
 
-def _write_local_credentials(username: str, password: str, email: str | None = None) -> None:
+def _write_local_credentials(username: str, password: str, email: Optional[str] = None) -> None:
     normalized_username = _normalize_username(username)
     _validate_password(password)
     local_credentials = _fetch_local_credentials()
@@ -224,21 +225,21 @@ def _write_local_credentials(username: str, password: str, email: str | None = N
         )
 
 
-def get_admin_username() -> str | None:
+def get_admin_username() -> Optional[str]:
     local_credentials = _fetch_local_credentials()
     if local_credentials is not None:
         return str(local_credentials["username"])
     return _env_admin_username()
 
 
-def get_admin_password_hash() -> bytes | None:
+def get_admin_password_hash() -> Optional[bytes]:
     local_credentials = _fetch_local_credentials()
     if local_credentials is not None:
         return bytes(local_credentials["password_hash"])
     return _env_admin_password_hash()
 
 
-def get_admin_email() -> str | None:
+def get_admin_email() -> Optional[str]:
     local_credentials = _fetch_local_credentials()
     if local_credentials is not None and local_credentials["email"]:
         return _normalize_email(str(local_credentials["email"]))
@@ -298,7 +299,7 @@ def ensure_admin_auth_config(allow_bootstrap: bool = False) -> None:
         raise RuntimeError("ADMIN_PASSWORD_HASH is not a valid bcrypt hash.")
 
 
-def setup_admin_credentials(username: str, password: str, email: str | None = None) -> AuthStatus:
+def setup_admin_credentials(username: str, password: str, email: Optional[str] = None) -> AuthStatus:
     normalized_email = _normalize_email(email) if email is not None else None
     status = get_auth_status()
     existing_email = get_admin_email()

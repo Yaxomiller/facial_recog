@@ -1,4 +1,5 @@
 import cv2
+from typing import Optional
 
 from src.camera import open_camera
 from src.config import (
@@ -14,7 +15,7 @@ class BlinkLivenessTracker:
     def __init__(self, min_open_frames: int, min_closed_frames: int) -> None:
         self.min_open_frames = min_open_frames
         self.min_closed_frames = min_closed_frames
-        self.active_name: str | None = None
+        self.active_name: Optional[str] = None
         self.open_frames = 0
         self.closed_frames = 0
         self.blink_started = False

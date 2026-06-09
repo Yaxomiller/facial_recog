@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
 from src.config import DATABASE_FILE
 
@@ -65,7 +65,7 @@ def upsert_person(name: str, face_folder: Path) -> None:
         )
 
 
-def get_person_by_name(name: str) -> sqlite3.Row | None:
+def get_person_by_name(name: str) -> Optional[sqlite3.Row]:
     with get_connection() as connection:
         cursor = connection.execute("SELECT * FROM people WHERE name = ?", (name,))
         return cursor.fetchone()
@@ -102,7 +102,7 @@ def insert_attendance(
     attendance_date: str,
     attendance_time: str,
     status: str,
-    confidence: float | None,
+    confidence: Optional[float],
     source: str,
 ) -> bool:
     now = datetime.now().isoformat(timespec="seconds")

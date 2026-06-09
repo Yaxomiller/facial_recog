@@ -3,7 +3,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as Futur
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import Lock
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 import cv2
@@ -106,14 +106,14 @@ class PendingBreathSession:
 
 @dataclass
 class DescriptorConsensus:
-    worker_id: int | None
+    worker_id: Optional[int]
     best_score: float
     second_score: float
     support_scores: list[float]
-    representative_embedding: np.ndarray | None
+    representative_embedding: Optional[np.ndarray]
     variant_hits: int
     candidates: list[CandidateDebug]
-    rejection_reason: str | None = None
+    rejection_reason: Optional[str] = None
 
 
 class ScalableAttendanceService:
@@ -128,14 +128,14 @@ class ScalableAttendanceService:
         self.breath_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="breath-analyzer")
         self.breath_session_lock = Lock()
         self.breath_sessions: dict[str, PendingBreathSession] = {}
-        self.lbph_recognizer: cv2.face_LBPHFaceRecognizer | None = None
+        self.lbph_recognizer: Optional[cv2.face_LBPHFaceRecognizer] = None
         self.lbph_label_to_worker_id: dict[int, int] = {}
         self.worker_profiles: dict[int, WorkerProfile] = {}
         self.pending_matches: dict[str, PendingMatch] = {}
         self._initialize_recognition_state()
 
     def _initialize_recognition_state(self) -> None:
-        rebuild_error: Exception | None = None
+        rebuild_error: Optional[Exception] = None
         try:
             # Rebuild from the current enrollment database on every startup so
             # LBPH state, vector hits, and worker profiles cannot drift apart.
@@ -184,7 +184,7 @@ class ScalableAttendanceService:
         worker_id: int,
         score: float,
         strict_mode: bool = False,
-    ) -> tuple[bool, float, str | None]:
+    ) -> tuple[bool, float, Optional[str]]:
         if not strict_mode and score >= FAST_ACCEPT_SCORE:
             self.pending_matches.pop(camera_id, None)
             return True, score, None
@@ -262,7 +262,7 @@ class ScalableAttendanceService:
             ],
         )
 
-    def _tighten_face_crop(self, face_crop: np.ndarray, trim_ratio: float = 0.08) -> np.ndarray | None:
+    def _tighten_face_crop(self, face_crop: np.ndarray, trim_ratio: float = 0.08) -> Optional[np.ndarray]:
         height, width = face_crop.shape[:2]
         trim_x = int(width * trim_ratio)
         trim_y = int(height * trim_ratio)
@@ -429,7 +429,7 @@ class ScalableAttendanceService:
             return 1.0 if value >= ceiling else 0.0
         return float(max(0.0, min(1.0, (value - floor) / (ceiling - floor))))
 
-    def _single_profile_min_score(self, profile: WorkerProfile | None) -> float:
+    def _single_profile_min_score(self, profile: Optional[WorkerProfile]) -> float:
         baseline = max(MATCH_THRESHOLD, OPEN_SET_MIN_SCORE)
         if profile is None:
             return float(max(baseline, min(SINGLE_PROFILE_MIN_SCORE, 0.78)))
@@ -440,7 +440,7 @@ class ScalableAttendanceService:
         )
         return float(min(0.78, adaptive_floor))
 
-    def _adaptive_profile_score_threshold(self, profile: WorkerProfile | None, profile_count: int) -> float:
+    def _adaptive_profile_score_threshold(self, profile: Optional[WorkerProfile], profile_count: int) -> float:
         baseline = max(MATCH_THRESHOLD, OPEN_SET_MIN_SCORE)
         if profile is None:
             return float(baseline)
@@ -453,7 +453,7 @@ class ScalableAttendanceService:
         )
         return float(adaptive_floor)
 
-    def _adaptive_support_threshold(self, profile: WorkerProfile | None, profile_count: int) -> float:
+    def _adaptive_support_threshold(self, profile: Optional[WorkerProfile], profile_count: int) -> float:
         baseline = OPEN_SET_SUPPORT_SCORE
         if profile is None:
             return float(baseline)
@@ -467,7 +467,7 @@ class ScalableAttendanceService:
         raw_score: float,
         support_scores: list[float],
         query_embedding: np.ndarray,
-        auxiliary_score: float | None = None,
+        auxiliary_score: Optional[float] = None,
     ) -> float:
         profile = self.worker_profiles.get(worker_id)
         profile_count = max(0, len(self.worker_profiles))
@@ -848,7 +848,7 @@ class ScalableAttendanceService:
         for session_id in stale_session_ids:
             del self.breath_sessions[session_id]
 
-    def _active_breath_session_locked(self) -> PendingBreathSession | None:
+    def _active_breath_session_locked(self) -> Optional[PendingBreathSession]:
         for session in self.breath_sessions.values():
             if not session.future.done():
                 return session
@@ -1344,8 +1344,8 @@ class ScalableAttendanceService:
         face_crop: np.ndarray,
         face_width: int,
         face_height: int,
-        blur_variance: float | None = None,
-        brightness: float | None = None,
+        blur_variance: Optional[float] = None,
+        brightness: Optional[float] = None,
     ) -> bool:
         if face_width < MIN_FACE_WIDTH or face_height < MIN_FACE_HEIGHT:
             return False
@@ -1395,7 +1395,7 @@ class ScalableAttendanceService:
         brightness = float(np.mean(gray))
         return blur_variance, brightness
 
-    def _aggregate_descriptor_hits(self, hits: list) -> tuple[int | None, float, float]:
+    def _aggregate_descriptor_hits(self, hits: list) -> tuple[Optional[int], float, float]:
         if not hits:
             return None, 0.0, 0.0
 
@@ -1430,7 +1430,7 @@ def _decode_image(image_bytes: bytes) -> np.ndarray:
     return image
 
 
-def _encode_training_face(face_image: np.ndarray | None) -> bytes | None:
+def _encode_training_face(face_image: Optional[np.ndarray]) -> Optional[bytes]:
     if face_image is None:
         return None
     ok, encoded = cv2.imencode(".png", face_image)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -12,7 +13,7 @@ from src.v2.vision import align_face_by_eyes
 class BaseFaceEmbedder(ABC):
     name = "base"
     production_ready = False
-    vector_size: int | None = None
+    vector_size: Optional[int] = None
 
     @abstractmethod
     def embed(self, face_image: np.ndarray) -> np.ndarray:

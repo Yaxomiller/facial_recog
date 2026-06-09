@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
@@ -166,7 +167,7 @@ def _get_backend_startup_timeout_seconds() -> float:
 
 def _wait_for_backend_ready(
     timeout_seconds: float,
-    backend_process: subprocess.Popen[str] | None = None,
+    backend_process: Optional[subprocess.Popen[str]] = None,
     readiness_check=None,
     sleep_interval_seconds: float = BACKEND_POLL_INTERVAL_SECONDS,
 ) -> bool:
@@ -235,9 +236,9 @@ def _start_local_backend(host: str, port: int) -> subprocess.Popen[str]:
     environment["ATTENDANCE_WEB_PORT"] = str(port)
     environment["ATTENDANCE_OPEN_BROWSER_ON_START"] = "false"
     timeout_seconds = _get_backend_startup_timeout_seconds()
-    last_exit_code: int | None = None
-    last_command: list[str] | None = None
-    last_spawn_error: OSError | None = None
+    last_exit_code: Optional[int] = None
+    last_command: Optional[list[str]] = None
+    last_spawn_error: Optional[OSError] = None
 
     for python_command in _python_command_candidates():
         backend_command = [*python_command, "api.py"]
@@ -299,7 +300,7 @@ def _start_local_backend(host: str, port: int) -> subprocess.Popen[str]:
     )
 
 
-def _stop_local_backend(process: subprocess.Popen[str] | None) -> None:
+def _stop_local_backend(process: Optional[subprocess.Popen[str]]) -> None:
     if process is None:
         return
     if process.poll() is not None:

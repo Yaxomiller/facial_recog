@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from types import SimpleNamespace
+from typing import Optional
 import unittest
 from unittest.mock import patch
 
@@ -38,7 +39,7 @@ class _FakeSample:
 
 
 class _FakeSink:
-    def __init__(self, samples: list[_FakeSample | None]) -> None:
+    def __init__(self, samples: list[Optional[_FakeSample]]) -> None:
         self._samples = list(samples)
         self.emit_calls: list[tuple[str, int]] = []
 
@@ -50,7 +51,7 @@ class _FakeSink:
 
 
 class _FakePipeline:
-    def __init__(self, sink: _FakeSink | None) -> None:
+    def __init__(self, sink: Optional[_FakeSink]) -> None:
         self._sink = sink
         self.states: list[str] = []
 
@@ -87,21 +88,19 @@ class CameraTests(unittest.TestCase):
         pipeline = _FakePipeline(sink)
         gst = _FakeGst(pipeline)
 
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "ATTENDANCE_CAMERA_PIPELINE": "",
-                    "ATTENDANCE_CAMERA_DEVICE": "/dev/video7",
-                    "ATTENDANCE_CAMERA_WIDTH": "1280",
-                    "ATTENDANCE_CAMERA_HEIGHT": "720",
-                    "ATTENDANCE_CAMERA_FRAMERATE": "45",
-                },
-                clear=False,
-            ),
-            patch("src.camera._load_gst", return_value=gst),
+        with patch.dict(
+            os.environ,
+            {
+                "ATTENDANCE_CAMERA_PIPELINE": "",
+                "ATTENDANCE_CAMERA_DEVICE": "/dev/video7",
+                "ATTENDANCE_CAMERA_WIDTH": "1280",
+                "ATTENDANCE_CAMERA_HEIGHT": "720",
+                "ATTENDANCE_CAMERA_FRAMERATE": "45",
+            },
+            clear=False,
         ):
-            camera = open_camera()
+            with patch("src.camera._load_gst", return_value=gst):
+                camera = open_camera()
 
         self.assertEqual(camera.source_name, "GStreamer pipeline (/dev/video7)")
         self.assertIn("v4l2src device=/dev/video7", gst.pipeline_description)
@@ -122,11 +121,9 @@ class CameraTests(unittest.TestCase):
             "appsink name=sink emit-signals=true max-buffers=1 drop=true"
         )
 
-        with (
-            patch.dict(os.environ, {"ATTENDANCE_CAMERA_PIPELINE": configured_pipeline}, clear=False),
-            patch("src.camera._load_gst", return_value=gst),
-        ):
-            camera = open_camera()
+        with patch.dict(os.environ, {"ATTENDANCE_CAMERA_PIPELINE": configured_pipeline}, clear=False):
+            with patch("src.camera._load_gst", return_value=gst):
+                camera = open_camera()
 
         self.assertEqual(camera.source_name, "Configured GStreamer pipeline")
         self.assertEqual(gst.pipeline_description, configured_pipeline)
@@ -146,12 +143,10 @@ class CameraTests(unittest.TestCase):
             camera = CameraStream(width=width, height=height, framerate=60)
             camera.start()
 
-        with (
-            patch("src.camera.cv2.cvtColor", return_value=decoded) as cvt_color,
-            patch("src.camera.cv2.rotate", return_value=rotated) as rotate,
-            patch("src.camera.cv2.flip", return_value=flipped) as flip,
-        ):
-            ok, frame = camera.read()
+        with patch("src.camera.cv2.cvtColor", return_value=decoded) as cvt_color:
+            with patch("src.camera.cv2.rotate", return_value=rotated) as rotate:
+                with patch("src.camera.cv2.flip", return_value=flipped) as flip:
+                    ok, frame = camera.read()
 
         self.assertTrue(ok)
         self.assertIs(frame, flipped)

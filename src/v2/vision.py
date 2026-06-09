@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from typing import Optional, Union
 from src.vision import detect_eyes
 
 try:
@@ -50,10 +51,10 @@ def prepare_face_gray(face_image: np.ndarray) -> np.ndarray:
 
 
 def select_eye_pair(
-    eyes: list[tuple[int, int, int, int]] | np.ndarray,
+    eyes: Union[list[tuple[int, int, int, int]], np.ndarray],
     image_width: int,
     image_height: int,
-) -> tuple[tuple[float, float], tuple[float, float]] | None:
+) -> Optional[tuple[tuple[float, float], tuple[float, float]]]:
     if len(eyes) < 2:
         return None
 
@@ -69,7 +70,7 @@ def select_eye_pair(
     if len(centers) < 2:
         return None
 
-    best_pair: tuple[tuple[float, float], tuple[float, float]] | None = None
+    best_pair: Optional[tuple[tuple[float, float], tuple[float, float]]] = None
     best_score = float("-inf")
     target_y = image_height * 0.38
     for index, left_candidate in enumerate(centers[:-1]):

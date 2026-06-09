@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sqlite3
 import uuid
+from typing import Optional
 
 from src.runtime_paths import DATA_DIR
 
@@ -31,7 +32,7 @@ def _utc_now_iso() -> str:
 
 
 @contextmanager
-def get_connection(db_file: Path | None = None) -> sqlite3.Connection:
+def get_connection(db_file: Optional[Path] = None) -> sqlite3.Connection:
     target_file = db_file or SESSION_DB_FILE
     target_file.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(target_file, timeout=30)
@@ -102,7 +103,7 @@ class SQLiteSessionStore:
             )
         return SessionState(session_id=session_id, username=username, expires_at=expires_at)
 
-    def get_session(self, session_id: str) -> SessionState | None:
+    def get_session(self, session_id: str) -> Optional[SessionState]:
         with get_connection(self.db_file) as connection:
             self._purge_expired_sessions(connection)
             row = connection.execute(

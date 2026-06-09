@@ -1,7 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from typing import Iterator, Optional
 
 import numpy as np
 
@@ -121,12 +121,12 @@ def list_workers() -> list[sqlite3.Row]:
         return connection.execute("SELECT * FROM workers ORDER BY name ASC").fetchall()
 
 
-def fetch_worker_by_employee_code(employee_code: str) -> sqlite3.Row | None:
+def fetch_worker_by_employee_code(employee_code: str) -> Optional[sqlite3.Row]:
     with get_connection() as connection:
         return connection.execute("SELECT * FROM workers WHERE employee_code = ?", (employee_code,)).fetchone()
 
 
-def delete_worker_by_employee_code(employee_code: str) -> sqlite3.Row | None:
+def delete_worker_by_employee_code(employee_code: str) -> Optional[sqlite3.Row]:
     with get_connection() as connection:
         worker = connection.execute("SELECT * FROM workers WHERE employee_code = ?", (employee_code,)).fetchone()
         if worker is None:
@@ -138,7 +138,7 @@ def delete_worker_by_employee_code(employee_code: str) -> sqlite3.Row | None:
         return worker
 
 
-def store_embedding(worker_id: int, vector: np.ndarray, backend: str, face_image: bytes | None = None) -> None:
+def store_embedding(worker_id: int, vector: np.ndarray, backend: str, face_image: Optional[bytes] = None) -> None:
     created_at = utc_now_iso()
     with get_connection() as connection:
         connection.execute(
@@ -157,7 +157,7 @@ def store_embedding(worker_id: int, vector: np.ndarray, backend: str, face_image
         )
 
 
-def delete_embeddings_for_worker(worker_id: int, backend: str | None = None) -> None:
+def delete_embeddings_for_worker(worker_id: int, backend: Optional[str] = None) -> None:
     with get_connection() as connection:
         if backend is None:
             connection.execute("DELETE FROM worker_embeddings WHERE worker_id = ?", (worker_id,))
@@ -168,7 +168,7 @@ def delete_embeddings_for_worker(worker_id: int, backend: str | None = None) -> 
             )
 
 
-def fetch_embeddings(backend: str | None = None, dimension: int | None = None) -> list[tuple[int, np.ndarray]]:
+def fetch_embeddings(backend: Optional[str] = None, dimension: Optional[int] = None) -> list[tuple[int, np.ndarray]]:
     with get_connection() as connection:
         if backend is None and dimension is None:
             rows = connection.execute(
@@ -207,7 +207,7 @@ def fetch_embeddings(backend: str | None = None, dimension: int | None = None) -
         return [(row["worker_id"], np.frombuffer(row["vector"], dtype=np.float32)) for row in rows]
 
 
-def fetch_worker(worker_id: int) -> sqlite3.Row | None:
+def fetch_worker(worker_id: int) -> Optional[sqlite3.Row]:
     with get_connection() as connection:
         return connection.execute("SELECT * FROM workers WHERE id = ?", (worker_id,)).fetchone()
 
@@ -228,8 +228,8 @@ def fetch_face_samples(backend: str) -> list[tuple[int, bytes]]:
 
 def fetch_training_samples(
     backend: str,
-    dimension: int | None = None,
-) -> list[tuple[int, np.ndarray, bytes | None]]:
+    dimension: Optional[int] = None,
+) -> list[tuple[int, np.ndarray, Optional[bytes]]]:
     with get_connection() as connection:
         if dimension is None:
             rows = connection.execute(
@@ -268,7 +268,7 @@ def worker_count() -> int:
         return 0 if row is None else int(row["count"])
 
 
-def embedding_count(backend: str | None = None, dimension: int | None = None) -> int:
+def embedding_count(backend: Optional[str] = None, dimension: Optional[int] = None) -> int:
     with get_connection() as connection:
         if backend is None and dimension is None:
             row = connection.execute("SELECT COUNT(*) AS count FROM worker_embeddings").fetchone()
@@ -326,7 +326,7 @@ def record_screening_event(
     cannabis_ppb: float,
     alcohol_clear: bool,
     cannabis_clear: bool,
-    raw_sensor_value: float | None = None,
+    raw_sensor_value: Optional[float] = None,
 ) -> sqlite3.Row:
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=ATTENDANCE_COOLDOWN_HOURS)).isoformat(timespec="seconds")
@@ -405,7 +405,7 @@ def list_attendance(limit: int = 100) -> list[sqlite3.Row]:
         ).fetchall()
 
 
-def delete_attendance_event(attendance_id: int) -> sqlite3.Row | None:
+def delete_attendance_event(attendance_id: int) -> Optional[sqlite3.Row]:
     with get_connection() as connection:
         attendance = connection.execute(
             """
@@ -423,7 +423,7 @@ def delete_attendance_event(attendance_id: int) -> sqlite3.Row | None:
         return attendance
 
 
-def system_counts(backend: str | None = None, dimension: int | None = None) -> dict[str, int]:
+def system_counts(backend: Optional[str] = None, dimension: Optional[int] = None) -> dict[str, int]:
     with get_connection() as connection:
         workers = connection.execute("SELECT COUNT(*) AS count FROM workers").fetchone()
         if backend is None and dimension is None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from typing import Optional
 
 import cv2
 
@@ -16,10 +17,10 @@ STARTUP_TIMEOUT_SECONDS = max(0.5, float(os.getenv("ATTENDANCE_LOCAL_CAMERA_STAR
 class LocalCameraProxy:
     def __init__(self) -> None:
         self._condition = threading.Condition()
-        self._thread: threading.Thread | None = None
-        self._stop_event: threading.Event | None = None
-        self._camera: CameraStream | None = None
-        self._latest_jpeg: bytes | None = None
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event: Optional[threading.Event] = None
+        self._camera: Optional[CameraStream] = None
+        self._latest_jpeg: Optional[bytes] = None
         self._source_name = ""
         self._last_error = ""
 
@@ -99,7 +100,7 @@ class LocalCameraProxy:
         return self._source_name or "local-camera"
 
     def _capture_loop(self, stop_event: threading.Event) -> None:
-        camera: CameraStream | None = None
+        camera: Optional[CameraStream] = None
         try:
             camera = open_camera()
             with self._condition:

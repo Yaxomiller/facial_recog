@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -29,11 +30,11 @@ class BaseVectorIndex(ABC):
         return [self.search(query, top_k) for query in queries]
 
     @abstractmethod
-    def save(self, namespace: str | None = None) -> None:
+    def save(self, namespace: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def load(self, expected_namespace: str | None = None) -> bool:
+    def load(self, expected_namespace: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     @property
@@ -95,7 +96,7 @@ class NumpyVectorIndex(BaseVectorIndex):
             results.append([SearchHit(worker_id=int(self.worker_ids[i]), score=float(row[i])) for i in ranked_indexes])
         return results
 
-    def save(self, namespace: str | None = None) -> None:
+    def save(self, namespace: Optional[str] = None) -> None:
         VECTOR_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
         self.namespace = namespace or ""
         np.savez(
@@ -105,7 +106,7 @@ class NumpyVectorIndex(BaseVectorIndex):
             namespace=np.asarray(self.namespace),
         )
 
-    def load(self, expected_namespace: str | None = None) -> bool:
+    def load(self, expected_namespace: Optional[str] = None) -> bool:
         if not VECTOR_INDEX_FILE.exists():
             return False
 
@@ -190,7 +191,7 @@ class LSHVectorIndex(BaseVectorIndex):
             for i in ranked_local_indexes
         ]
 
-    def save(self, namespace: str | None = None) -> None:
+    def save(self, namespace: Optional[str] = None) -> None:
         VECTOR_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
         self.namespace = namespace or ""
         np.savez(
@@ -201,7 +202,7 @@ class LSHVectorIndex(BaseVectorIndex):
             namespace=np.asarray(self.namespace),
         )
 
-    def load(self, expected_namespace: str | None = None) -> bool:
+    def load(self, expected_namespace: Optional[str] = None) -> bool:
         if not VECTOR_INDEX_FILE.exists():
             return False
 
@@ -315,7 +316,7 @@ class FaissVectorIndex(BaseVectorIndex):
             results.append(hits)
         return results
 
-    def save(self, namespace: str | None = None) -> None:
+    def save(self, namespace: Optional[str] = None) -> None:
         VECTOR_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
         self.namespace = namespace or ""
         np.savez(
@@ -325,7 +326,7 @@ class FaissVectorIndex(BaseVectorIndex):
             namespace=np.asarray(self.namespace),
         )
 
-    def load(self, expected_namespace: str | None = None) -> bool:
+    def load(self, expected_namespace: Optional[str] = None) -> bool:
         if not VECTOR_INDEX_FILE.exists():
             return False
 

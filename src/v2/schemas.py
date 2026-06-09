@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,9 +43,9 @@ class FaceDebug(BaseModel):
     face_index: int
     accepted: bool
     reason: str
-    blur_variance: float | None = None
-    brightness: float | None = None
-    eyes_detected: int | None = None
+    blur_variance: Optional[float] = None
+    brightness: Optional[float] = None
+    eyes_detected: Optional[int] = None
     candidates: list[CandidateDebug] = Field(default_factory=list)
 
 
@@ -74,7 +75,7 @@ class BreathTestResult(BaseModel):
     employee_code: str
     name: str
     matched_score: float
-    raw_sensor_value: float | None = None
+    raw_sensor_value: Optional[float] = None
     alcohol_ppb: float
     cannabis_ppb: float
     alcohol_clear: bool
@@ -104,7 +105,7 @@ class AttendanceRow(BaseModel):
     name: str
     camera_id: str
     matched_score: float
-    raw_sensor_value: float | None = None
+    raw_sensor_value: Optional[float] = None
     alcohol_ppb: float
     cannabis_ppb: float
     alcohol_clear: bool

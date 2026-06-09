@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import importlib
 import random
 import time
-from typing import Any
+from typing import Any, Optional
 
 from src.v2.config import (
     BREATH_ADC_BITS,
@@ -50,7 +50,7 @@ class BreathReading:
     cannabis_ppb: float
     alcohol_clear: bool
     cannabis_clear: bool
-    raw_sensor_value: float | None = None
+    raw_sensor_value: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ class MockBreathAnalyzer(BreathAnalyzer):
 class LiveSpiBreathAnalyzer(BreathAnalyzer):
     name = "spi"
 
-    def __init__(self, settings: LiveSpiSettings | None = None, periphery_module: Any | None = None) -> None:
+    def __init__(self, settings: Optional[LiveSpiSettings] = None, periphery_module: Optional[Any] = None) -> None:
         self.settings = settings or LiveSpiSettings()
         self.sample_seconds = self.settings.sample_seconds
         self.periphery_module = periphery_module or importlib.import_module("periphery")
@@ -241,7 +241,7 @@ class LiveSpiBreathAnalyzer(BreathAnalyzer):
 def build_breath_reading(
     alcohol_ppb: float,
     cannabis_ppb: float,
-    raw_sensor_value: float | None = None,
+    raw_sensor_value: Optional[float] = None,
 ) -> BreathReading:
     alcohol_value = max(0.0, float(alcohol_ppb))
     cannabis_value = max(0.0, float(cannabis_ppb))

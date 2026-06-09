@@ -31,16 +31,14 @@ class LocalCameraProxyTests(unittest.TestCase):
         proxy = LocalCameraProxy()
         local_camera = _FakeLocalCamera()
 
-        with (
-            patch("src.local_camera_proxy.open_camera", return_value=local_camera) as open_camera,
-            patch(
+        with patch("src.local_camera_proxy.open_camera", return_value=local_camera) as open_camera:
+            with patch(
                 "src.local_camera_proxy.cv2.imencode",
                 return_value=(True, _FakeEncodedFrame(b"\xff\xd8local\xff\xd9")),
-            ) as imencode,
-        ):
-            source_name = proxy.start()
-            frame = proxy.get_frame_bytes(timeout_seconds=0.5)
-            proxy.stop()
+            ) as imencode:
+                source_name = proxy.start()
+                frame = proxy.get_frame_bytes(timeout_seconds=0.5)
+                proxy.stop()
 
         self.assertEqual(source_name, "Radxa GStreamer pipeline (/dev/video0)")
         self.assertEqual(frame, b"\xff\xd8local\xff\xd9")

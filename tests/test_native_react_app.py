@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Optional
 import unittest
 from unittest.mock import patch
 
@@ -13,10 +14,10 @@ from src.native_react_app import (
 
 
 class _StubProcess:
-    def __init__(self, polls: list[int | None]) -> None:
+    def __init__(self, polls: list[Optional[int]]) -> None:
         self._polls = list(polls)
 
-    def poll(self) -> int | None:
+    def poll(self) -> Optional[int]:
         if len(self._polls) > 1:
             return self._polls.pop(0)
         return self._polls[0]

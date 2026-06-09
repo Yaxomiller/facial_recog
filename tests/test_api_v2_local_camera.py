@@ -16,18 +16,16 @@ async def _collect_chunks(streaming_response) -> list[bytes]:
 
 class LocalCameraApiTests(unittest.TestCase):
     def test_local_camera_stream_serves_mjpeg_chunks(self) -> None:
-        with (
-            patch.object(api_v2.local_camera_proxy, "is_running", return_value=False),
-            patch.object(api_v2.local_camera_proxy, "start", return_value="Radxa GStreamer pipeline (/dev/video0)") as start,
-            patch.object(
-                api_v2.local_camera_proxy,
-                "get_frame_bytes",
-                side_effect=[b"jpeg-bytes", RuntimeError("stream complete")],
-            ),
-            patch.object(api_v2.time, "sleep", return_value=None),
-        ):
-            response = api_v2.local_camera_stream(None)
-            chunks = asyncio.run(_collect_chunks(response))
+        with patch.object(api_v2.local_camera_proxy, "is_running", return_value=False):
+            with patch.object(api_v2.local_camera_proxy, "start", return_value="Radxa GStreamer pipeline (/dev/video0)") as start:
+                with patch.object(
+                    api_v2.local_camera_proxy,
+                    "get_frame_bytes",
+                    side_effect=[b"jpeg-bytes", RuntimeError("stream complete")],
+                ):
+                    with patch.object(api_v2.time, "sleep", return_value=None):
+                        response = api_v2.local_camera_stream(None)
+                        chunks = asyncio.run(_collect_chunks(response))
 
         body = b"".join(chunks)
         self.assertEqual(response.status_code, 200)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -35,7 +36,7 @@ def _rotate_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
-def _flip_code() -> int | None:
+def _flip_code() -> Optional[int]:
     value = os.getenv("ATTENDANCE_CAMERA_FLIP_CODE", "1").strip().lower()
     if not value or value in {"none", "off", "disable", "disabled"}:
         return None
@@ -69,11 +70,11 @@ def _default_timeout_seconds() -> float:
     return max(0.1, _float_env("ATTENDANCE_CAMERA_TIMEOUT_SECONDS", 1.0))
 
 
-def _default_rotate_code() -> int | None:
+def _default_rotate_code() -> Optional[int]:
     return cv2.ROTATE_180 if _rotate_enabled() else None
 
 
-def _default_flip_code() -> int | None:
+def _default_flip_code() -> Optional[int]:
     return _flip_code()
 
 _GST = None
@@ -117,13 +118,13 @@ class CameraStream:
     def __init__(
         self,
         *,
-        device_path: str | None = None,
-        width: int | None = None,
-        height: int | None = None,
-        framerate: int | None = None,
-        timeout_seconds: float | None = None,
-        rotate_code: int | None = None,
-        flip_code: int | None = None,
+        device_path: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        framerate: Optional[int] = None,
+        timeout_seconds: Optional[float] = None,
+        rotate_code: Optional[int] = None,
+        flip_code: Optional[int] = None,
     ) -> None:
         resolved_device_path = device_path or _default_device_path()
         resolved_width = width if width is not None else _default_width()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Optional
 import unittest
 from unittest.mock import patch
 
@@ -28,7 +29,7 @@ class _StubIndex:
         self.built_worker_ids = list(worker_ids)
         self.built_vectors = [vector.copy() for vector in vectors]
 
-    def save(self, namespace: str | None = None) -> None:
+    def save(self, namespace: Optional[str] = None) -> None:
         self.saved_namespace = namespace or ""
 
     @property
@@ -39,7 +40,7 @@ class _StubIndex:
 class _StubRecognizer:
     def __init__(self) -> None:
         self.trained_faces: list[np.ndarray] = []
-        self.trained_labels: np.ndarray | None = None
+        self.trained_labels: Optional[np.ndarray] = None
 
     def train(self, faces: list[np.ndarray], labels: np.ndarray) -> None:
         self.trained_faces = list(faces)
@@ -57,14 +58,12 @@ class LbphRebuildTests(unittest.TestCase):
         service.lbph_recognizer = None
         service.lbph_label_to_worker_id = {}
 
-        with (
-            patch("src.v2.service.repository.fetch_training_samples", return_value=[(7, stored_vector, b"face-bytes")]),
-            patch("src.v2.service.repository.fetch_embeddings", return_value=[]),
-            patch("src.v2.service.repository.worker_count", return_value=1),
-            patch("src.v2.service.cv2.imdecode", return_value=np.zeros((112, 112), dtype=np.uint8)),
-            patch("src.v2.service.cv2.face.LBPHFaceRecognizer_create", return_value=recognizer),
-        ):
-            stats = ScalableAttendanceService._rebuild_lbph_model(service)
+        with patch("src.v2.service.repository.fetch_training_samples", return_value=[(7, stored_vector, b"face-bytes")]):
+            with patch("src.v2.service.repository.fetch_embeddings", return_value=[]):
+                with patch("src.v2.service.repository.worker_count", return_value=1):
+                    with patch("src.v2.service.cv2.imdecode", return_value=np.zeros((112, 112), dtype=np.uint8)):
+                        with patch("src.v2.service.cv2.face.LBPHFaceRecognizer_create", return_value=recognizer):
+                            stats = ScalableAttendanceService._rebuild_lbph_model(service)
 
         self.assertEqual(stats.indexed_workers, 1)
         self.assertEqual(stats.indexed_embeddings, 1)

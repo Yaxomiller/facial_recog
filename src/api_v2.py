@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import time
+from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -196,7 +197,7 @@ if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
 
 
-def _extract_token(authorization: str | None, x_auth_token: str | None) -> str | None:
+def _extract_token(authorization: Optional[str], x_auth_token: Optional[str]) -> Optional[str]:
     if authorization and authorization.lower().startswith("bearer "):
         return authorization.split(" ", 1)[1].strip()
     if x_auth_token:
@@ -213,8 +214,8 @@ def _frontend_response(path: Path) -> FileResponse:
 
 
 def require_auth(
-    authorization: str | None = Header(default=None),
-    x_auth_token: str | None = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
+    x_auth_token: Optional[str] = Header(default=None),
 ) -> SessionState:
     token = _extract_token(authorization, x_auth_token)
     if not token:
@@ -226,9 +227,9 @@ def require_auth(
 
 
 def require_camera_auth(
-    token: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
-    x_auth_token: str | None = Header(default=None),
+    token: Optional[str] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+    x_auth_token: Optional[str] = Header(default=None),
 ) -> SessionState:
     resolved_token = _extract_token(authorization, x_auth_token)
     if not resolved_token and token:
@@ -389,8 +390,8 @@ def me(session: SessionState = Depends(require_auth)) -> MeResponse:
 
 @app.post("/api/v2/auth/logout")
 def logout(
-    authorization: str | None = Header(default=None),
-    x_auth_token: str | None = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
+    x_auth_token: Optional[str] = Header(default=None),
 ) -> dict[str, bool]:
     token = _extract_token(authorization, x_auth_token)
     if token:

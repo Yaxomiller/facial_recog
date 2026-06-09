@@ -2,7 +2,7 @@ import csv
 import pickle
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from src.config import ATTENDANCE_DIR, ENCODINGS_FILE, EXPORT_DIR, FACES_DIR, TRAINER_FILE
 from src.db import attendance_exists, get_person_by_name, init_database, insert_attendance
@@ -56,7 +56,7 @@ def attendance_already_marked(name: str) -> bool:
     return attendance_exists(person["id"], datetime.now().strftime("%Y-%m-%d"))
 
 
-def mark_attendance(name: str, confidence: float | None = None, source: str = "camera") -> bool:
+def mark_attendance(name: str, confidence: Optional[float] = None, source: str = "camera") -> bool:
     person = get_person_by_name(name)
     if person is None:
         return False

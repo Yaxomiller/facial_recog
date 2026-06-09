@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from typing import Optional
 
 from src.enrollment import enroll_person
 from src.exporter import export_attendance_to_excel, export_today
@@ -90,7 +91,7 @@ def handle_gui(_: argparse.Namespace) -> None:
     _launch_legacy_tk_app()
 
 
-def _resolve_browser_executable(candidate: str) -> str | None:
+def _resolve_browser_executable(candidate: str) -> Optional[str]:
     stripped = candidate.strip()
     if not stripped:
         return None
@@ -100,7 +101,7 @@ def _resolve_browser_executable(candidate: str) -> str | None:
     return shutil.which(stripped)
 
 
-def _browser_app_command(url: str) -> list[str] | None:
+def _browser_app_command(url: str) -> Optional[list[str]]:
     explicit_browser = os.getenv("ATTENDANCE_APP_BROWSER", "").strip()
     candidates = [explicit_browser] if explicit_browser else []
     candidates.extend(
@@ -152,7 +153,7 @@ def _open_frontend_window(url: str, browser_mode: str) -> None:
     threading.Timer(1.0, open_window).start()
 
 
-def launch_web_app(open_browser: bool = True, browser_mode: str | None = None) -> None:
+def launch_web_app(open_browser: bool = True, browser_mode: Optional[str] = None) -> None:
     import uvicorn
 
     ensure_react_frontend_built()
