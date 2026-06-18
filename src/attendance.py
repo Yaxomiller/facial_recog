@@ -3,26 +3,15 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
-from typing import Callable, Optional
+from typing import Optional
 
 from src.enrollment import enroll_person
 from src.exporter import export_attendance_to_excel, export_today
-from src.native_react_app import (
-    NativeShellUnavailable,
-    ensure_react_frontend_built,
-    get_react_frontend_build_stamp,
-    launch_native_react_app,
-)
+from src.frontend_build import ensure_react_frontend_built, get_react_frontend_build_stamp
 from src.recognition import recognize_and_mark
 from src.tauri_react_app import launch_tauri_react_app
 from src.training import train_model
 from src.web_config import get_browser_host, get_web_host, get_web_port
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "frontend"
-FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 
 
 def handle_enroll(args: argparse.Namespace) -> None:
@@ -58,36 +47,28 @@ def _launch_legacy_tk_app() -> None:
         raise
 
 
-def launch_lightweight_native_app() -> None:
-    _launch_native_with_browser_fallback()
-
-
-def launch_offline_native_react_app() -> None:
-    _launch_native_with_browser_fallback()
-
-
 def launch_default_app() -> None:
-    launch_web_app(browser_mode="web")
+    launch_native_desktop_app()
 
 
 def handle_native(_: argparse.Namespace) -> None:
-    _launch_native_with_browser_fallback()
+    launch_native_desktop_app()
 
 
 def handle_desktop(_: argparse.Namespace) -> None:
-    _launch_native_with_browser_fallback()
+    launch_native_desktop_app()
 
 
 def handle_offline(_: argparse.Namespace) -> None:
-    _launch_native_with_browser_fallback()
+    launch_native_desktop_app()
 
 
 def handle_react(_: argparse.Namespace) -> None:
-    _launch_native_with_browser_fallback()
+    launch_native_desktop_app()
 
 
 def handle_native_react(_: argparse.Namespace) -> None:
-    _launch_native_with_browser_fallback()
+    launch_native_desktop_app()
 
 
 def handle_gui(_: argparse.Namespace) -> None:
@@ -156,56 +137,8 @@ def _open_frontend_window(url: str, browser_mode: str) -> None:
     threading.Timer(1.0, open_window).start()
 
 
-def _native_browser_fallback_enabled() -> bool:
-    value = os.getenv("ATTENDANCE_NATIVE_BROWSER_FALLBACK", "true").strip().lower()
-    return value not in {"0", "false", "no", "off"}
-
-
-def _preferred_native_shell() -> str:
-    configured = os.getenv("ATTENDANCE_NATIVE_SHELL", "").strip().lower()
-    if configured in {"tauri", "pywebview"}:
-        return configured
-    if sys.platform.startswith("linux"):
-        return "tauri"
-    return "pywebview"
-
-
-def _native_shell_launchers() -> list[tuple[str, Callable[[], None]]]:
-    if _preferred_native_shell() == "tauri":
-        return [
-            ("Tauri", launch_tauri_react_app),
-            ("pywebview", launch_native_react_app),
-        ]
-    return [
-        ("pywebview", launch_native_react_app),
-        ("Tauri", launch_tauri_react_app),
-    ]
-
-
-def _launch_preferred_native_shell() -> None:
-    errors: list[str] = []
-    for shell_name, launcher in _native_shell_launchers():
-        try:
-            launcher()
-            return
-        except NativeShellUnavailable as exc:
-            errors.append(f"{shell_name}: {exc}")
-
-    if errors:
-        raise NativeShellUnavailable("\n\n".join(errors))
-    raise NativeShellUnavailable("No supported native desktop shell is available.")
-
-
-def _launch_native_with_browser_fallback() -> None:
-    try:
-        _launch_preferred_native_shell()
-    except NativeShellUnavailable as exc:
-        if not _native_browser_fallback_enabled():
-            raise
-
-        print(str(exc))
-        print("Native shell unavailable. Falling back to the browser UI.")
-        launch_web_app(browser_mode="app")
+def launch_native_desktop_app() -> None:
+    launch_tauri_react_app()
 
 
 def launch_web_app(open_browser: bool = True, browser_mode: Optional[str] = None) -> None:
@@ -231,14 +164,6 @@ def launch_web_app(open_browser: bool = True, browser_mode: Optional[str] = None
     if host in {"0.0.0.0", "::"}:
         print(f"LAN access enabled. Open http://<device-ip>:{port}/ from another device on the same network.")
     uvicorn.run("src.api_v2:app", host=host, port=port, reload=False)
-
-
-def launch_react_app() -> None:
-    launch_web_app(browser_mode="app")
-
-
-def launch_embedded_web_app() -> None:
-    launch_react_app()
 
 
 def handle_web(_: argparse.Namespace) -> None:

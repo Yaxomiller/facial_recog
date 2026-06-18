@@ -1,49 +1,14 @@
-import { existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { buildNativeBackend } from "./build_native_backend.mjs";
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(scriptDir, "..");
-const bundleScript = path.join(scriptDir, "bundle_backend.py");
-
-const configuredPython = process.env.ATTENDANCE_PYTHON?.trim();
-const candidates = [
-  configuredPython ? [configuredPython] : null,
-  [path.join(rootDir, ".venv", "Scripts", "python.exe")],
-  [path.join(rootDir, ".venv", "bin", "python")],
-  ["python"],
-  ["python3"],
-  ["py", "-3"],
-].filter(Boolean);
-
-function isPathLike(command) {
-  return command.includes("\\") || command.includes("/") || command.includes(":");
+try {
+  buildNativeBackend();
+  console.log("Bundled the native C++ backend for the desktop Linux app.");
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(
+    "Could not build the native C++ backend bundle. " +
+      "Install the required CMake/OpenCV/SQLite toolchain on the Linux build host and try again.\n" +
+      `Reason: ${message}`,
+  );
+  process.exit(1);
 }
-
-for (const candidate of candidates) {
-  const [command, ...prefixArgs] = candidate;
-  if (isPathLike(command) && !existsSync(command)) {
-    continue;
-  }
-
-  const result = spawnSync(command, [...prefixArgs, bundleScript], {
-    cwd: rootDir,
-    stdio: "inherit",
-    env: process.env,
-  });
-
-  if (!result.error) {
-    process.exit(result.status ?? 0);
-  }
-
-  if (result.error.code !== "ENOENT") {
-    throw result.error;
-  }
-}
-
-console.error(
-  "Could not find a Python interpreter for the desktop backend bundle. " +
-    "Set ATTENDANCE_PYTHON or create the project virtual environment first.",
-);
-process.exit(1);

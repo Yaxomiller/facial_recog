@@ -130,24 +130,23 @@ If you use `VITE_API_BASE_URL` from a different origin, allow that origin in the
 ATTENDANCE_CORS_ALLOW_ORIGINS=http://localhost:5173,http://<device-ip>:5173
 ```
 
-### Lightweight Offline App
+### Native Linux App
 
-The default app still starts the operator-facing React/FastAPI UI in the normal system browser so it can run on devices like the Radxa even when no native desktop runtime is installed.
+The operator-facing app now targets the Tauri Linux desktop shell with the bundled native C++ backend.
 
-Start the browser app:
+Build the desktop app:
+
+```bash
+cd frontend
+npm install
+npm run desktop:build
+```
+
+Launch it directly from the Tauri output, or use the thin Python helper:
 
 ```bash
 python app.py
-```
-
-If you want the native Linux shell, the launcher now prefers the existing Tauri desktop app on Linux and falls back to `pywebview` only when needed. Use one of these explicit commands:
-
-```bash
-python app.py offline
-python app.py native
 python app.py desktop
-python app.py react
-python app.py native-react
 ```
 
 Install Python dependencies:
@@ -156,35 +155,32 @@ Install Python dependencies:
 pip install -r requirements.txt
 ```
 
-Build the Tauri shell on your development machine:
+Install Linux build dependencies for the native backend and Tauri shell:
 
 ```bash
-cd frontend
-npm install
-npm run desktop:build
+sudo apt update
+sudo apt install build-essential cmake libsqlite3-dev libwebkit2gtk-4.0-37
 ```
 
-Then either run the generated binary directly, or point the Python launcher at it:
+`npm run desktop:build` packages:
+- the Tauri desktop shell
+- the native C++ backend bundle under `frontend/src-tauri/backend-runtime/attendance-native-backend`
+
+Run the generated Linux app directly from the Tauri output, for example:
 
 ```bash
-ATTENDANCE_TAURI_BINARY=/path/to/tresenso-face-attendance python app.py desktop
+./frontend/src-tauri/target/release/bundle/appimage/tresenso-face-attendance_1.0.0_amd64.AppImage
 ```
 
-Radxa / Debian packages for the native Linux shell runtime:
+Radxa / Debian runtime packages for the Linux desktop shell:
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-0
-```
-
-If you want to force the older Python shell instead, set:
-
-```bash
-ATTENDANCE_NATIVE_SHELL=pywebview
+sudo apt install libwebkit2gtk-4.0-37
 ```
 
 The native shell still needs a graphical desktop/X11 session to open its own window.
 
-If you want the browser-hosted version explicitly, use:
+If you want the browser-hosted development UI explicitly, use:
 
 ```bash
 python app.py web
@@ -406,39 +402,43 @@ pip install -r requirements.txt
 
 ## Run
 
-Launch the local React app in the system browser:
+Launch the native desktop helper after building the Tauri app:
 
 ```bash
 python app.py
 ```
 
-Build the frontend once on your main PC:
+Build the desktop app once on your main PC:
 
 ```bash
 cd frontend
 npm install
-npm run build
+npm run desktop:build
 ```
 
-After that, copy the repo with the built `frontend/dist` folder to the Radxa and start the same UI locally:
+After that, copy the repo with the built Tauri output to the Radxa and launch the desktop helper:
 
 ```bash
 python app.py
 ```
 
-If you want Chromium or Edge to open it in app-style kiosk mode without browser tabs, use:
+If you want the browser development UI instead, use:
+
+```bash
+python app.py web
+```
+
+If you want Chromium or Edge to open the browser UI in app-style kiosk mode without browser tabs, use:
 
 ```bash
 python app.py kiosk
 ```
 
-If you want the Linux-native shell on a machine where the Tauri binary is available, use:
+If you want the explicit native-desktop alias, use:
 
 ```bash
 python app.py desktop
 ```
-
-If the Tauri binary is not available, the launcher falls back to the browser UI unless you disable the fallback with `ATTENDANCE_NATIVE_BROWSER_FALLBACK=false`.
 
 Launch the legacy desktop Tkinter app:
 
@@ -447,11 +447,12 @@ python app.py gui
 ```
 
 Notes:
-- This path keeps the same React UI and now prefers the existing lightweight Tauri shell on Linux devices such as the Radxa.
-- On Linux and Radxa, installing a Chromium-based browser is still enough for the default `python app.py` flow.
+- The default `python app.py` helper now expects a built Tauri desktop binary to be available.
+- The Linux desktop package uses the bundled native C++ backend.
+- On Linux and Radxa, installing a Chromium-based browser is still enough for the explicit `python app.py web` or `python app.py kiosk` flows.
 - Use `python app.py kiosk` if you want the browser to open in app mode with no browser tabs.
 - The local UI starts the FastAPI backend on `0.0.0.0:8000` by default, so it can also be opened from another device on the same network.
-- If the device does not have npm, the launcher will still run as long as `frontend/dist` is already present.
+- If the device does not have npm, the browser launcher will still run as long as `frontend/dist` is already present.
 - Set `ATTENDANCE_SKIP_FRONTEND_BUILD=true` if you always want to skip auto-build checks on the device.
 - Set `ATTENDANCE_DATA_DIR` if you want the app to store attendance data somewhere other than the default app or project data folder.
 - `python app.py web` is still available if you want the explicit browser command.

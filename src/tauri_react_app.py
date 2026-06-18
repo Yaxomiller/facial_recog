@@ -7,14 +7,15 @@ import subprocess
 import sys
 from typing import Optional
 
-from src.native_react_app import NativeShellUnavailable
-
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 TAURI_DIR = FRONTEND_DIR / "src-tauri"
 TAURI_TARGET_DIR = TAURI_DIR / "target"
 DEFAULT_TAURI_BINARY_STEM = "tresenso-face-attendance"
+
+
+class NativeShellUnavailable(RuntimeError):
+    """Raised when the native desktop shell cannot start on this machine."""
 
 
 def _is_launchable_binary(path: Path) -> bool:
@@ -88,7 +89,7 @@ def launch_tauri_react_app() -> None:
         raise NativeShellUnavailable(
             "The Linux desktop shell now uses the prebuilt Tauri app.\n"
             "Build it with: `cd frontend && npm install && npm run desktop:build`\n"
-            "Then rerun `python app.py desktop`, or point to the binary with "
+            "Then run the built binary directly, or point this helper at it with "
             "`ATTENDANCE_TAURI_BINARY=/path/to/tresenso-face-attendance`."
         )
 
