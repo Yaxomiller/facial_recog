@@ -15,7 +15,7 @@ from src.db import init_database, list_attendance, list_people
 from src.enrollment import enroll_person
 from src.exporter import export_attendance_to_excel, export_today
 from src.person_manager import delete_person
-from src.recognition import recognize_and_mark
+from src.v2.camera_recognition import recognize_and_mark_v2
 from src.storage import ensure_directories
 from src.training import train_model
 
@@ -156,7 +156,7 @@ class AttendanceApp:
             actions,
             text="Start Recognition",
             command=lambda: self._run_async(
-                recognize_and_mark,
+                recognize_and_mark_v2,
                 "Recognition running. Press 'q', 'Esc', or close the camera window to stop.",
             ),
         )

@@ -48,26 +48,20 @@ def _launch_legacy_tk_app() -> None:
 
 
 def launch_default_app() -> None:
-    launch_native_desktop_app()
+    print(
+        "\nNo launch mode specified. Choose one:\n"
+        "\n"
+        "  python app.py web     - React web app in the browser (FastAPI + Vite frontend)\n"
+        "  python app.py gui     - Native Python desktop GUI (Tkinter, no browser needed)\n"
+        "  python app.py native  - Native Linux desktop app (Tauri shell, must be pre-built)\n"
+        "  python app.py kiosk   - React web app in a borderless app-mode browser window\n"
+        "\n"
+        "Other commands: enroll, train, recognize, export\n"
+        "Run `python app.py --help` for full usage.\n"
+    )
 
 
 def handle_native(_: argparse.Namespace) -> None:
-    launch_native_desktop_app()
-
-
-def handle_desktop(_: argparse.Namespace) -> None:
-    launch_native_desktop_app()
-
-
-def handle_offline(_: argparse.Namespace) -> None:
-    launch_native_desktop_app()
-
-
-def handle_react(_: argparse.Namespace) -> None:
-    launch_native_desktop_app()
-
-
-def handle_native_react(_: argparse.Namespace) -> None:
     launch_native_desktop_app()
 
 
@@ -205,43 +199,28 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("--end-date", default="", help="End date in YYYY-MM-DD format")
     export_parser.set_defaults(handler=handle_export)
 
-    offline_parser = subparsers.add_parser(
-        "offline",
-        help="Launch the operator app in the native desktop shell",
+    web_parser = subparsers.add_parser(
+        "web",
+        help="Start the FastAPI backend and open the React UI in the default browser",
     )
-    offline_parser.set_defaults(handler=handle_offline)
+    web_parser.set_defaults(handler=handle_web)
+
+    kiosk_parser = subparsers.add_parser(
+        "kiosk",
+        help="Start the FastAPI backend and open the React UI in a borderless app-mode browser window",
+    )
+    kiosk_parser.set_defaults(handler=handle_kiosk)
+
+    gui_parser = subparsers.add_parser(
+        "gui",
+        help="Launch the native Python desktop GUI (Tkinter, no browser or Tauri required)",
+    )
+    gui_parser.set_defaults(handler=handle_gui)
 
     native_parser = subparsers.add_parser(
         "native",
-        help="Launch the operator app in the native desktop shell",
+        help="Launch the native Linux desktop app (requires a pre-built Tauri binary)",
     )
     native_parser.set_defaults(handler=handle_native)
-
-    desktop_parser = subparsers.add_parser(
-        "desktop",
-        help="Launch the operator app in the native desktop shell",
-    )
-    desktop_parser.set_defaults(handler=handle_desktop)
-
-    react_parser = subparsers.add_parser(
-        "react",
-        help="Launch the operator app in the native desktop shell",
-    )
-    react_parser.set_defaults(handler=handle_react)
-
-    native_react_parser = subparsers.add_parser(
-        "native-react",
-        help="Launch the operator app in the native desktop shell",
-    )
-    native_react_parser.set_defaults(handler=handle_native_react)
-
-    gui_parser = subparsers.add_parser("gui", help="Launch the legacy Tkinter desktop app")
-    gui_parser.set_defaults(handler=handle_gui)
-
-    kiosk_parser = subparsers.add_parser("kiosk", help="Launch the browser UI in app mode")
-    kiosk_parser.set_defaults(handler=handle_kiosk)
-
-    web_parser = subparsers.add_parser("web", help="Launch the browser UI")
-    web_parser.set_defaults(handler=handle_web)
 
     return parser

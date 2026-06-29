@@ -1325,7 +1325,8 @@ RecognitionResult NativeRecognizer::recognize(
         cv::Mat face_crop = image(rect).clone();
 
         const auto [blur_variance, brightness] = face_quality_metrics(face_crop);
-        if (!is_face_usable(largest_first[face_index].width, largest_first[face_index].height, blur_variance, brightness)) {
+        if (!is_face_usable(largest_first[face_index].wi
+            dth, largest_first[face_index].height, blur_variance, brightness)) {
             result.unknown_faces += 1;
             result.debug_faces.push_back(FaceDebug{
                 static_cast<int>(face_index),

@@ -18,7 +18,7 @@ FACE_CASCADE_PATHS = [
 if mp is not None:
     _MP_FACE_DETECTION = mp.solutions.face_detection.FaceDetection(
         model_selection=0,
-        min_detection_confidence=0.35,
+        min_detection_confidence=0.55,
     )
 else:
     _MP_FACE_DETECTION = None
