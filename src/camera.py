@@ -108,7 +108,7 @@ def _build_pipeline_description(device_path: str, width: int, height: int, frame
 
     return (
         f"v4l2src device={device_path} ! "
-        f"video/x-raw,width={width},height={height},framerate={framerate}/1 ! "
+        f"video/x-raw,width={width},height={height} ! "
         "videoconvert ! video/x-raw,format=BGR ! "
         "appsink name=sink emit-signals=true max-buffers=1 drop=true"
     )
