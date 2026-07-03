@@ -168,9 +168,10 @@ class CameraTests(unittest.TestCase):
         gst = _FakeGst(pipeline)
         flipped = np.full((height, width, 3), 2, dtype=np.uint8)
 
-        with patch("src.camera._load_gst", return_value=gst):
-            camera = CameraStream(width=width, height=height, framerate=60)
-            camera.start()
+        with patch.dict(os.environ, {"ATTENDANCE_CAMERA_AUTO_BRIGHTNESS_TARGET": "0"}, clear=False):
+            with patch("src.camera._load_gst", return_value=gst):
+                camera = CameraStream(width=width, height=height, framerate=60)
+                camera.start()
 
         # Default transform is rotate-180 + horizontal flip, which the reader
         # folds into a single vertical flip (rotate180 == flip(-1); flip(-1)
@@ -203,6 +204,32 @@ class CameraTests(unittest.TestCase):
                 camera.get_frame()
 
         self.assertTrue(buffer.unmapped)
+
+    def test_read_brightens_dark_frames_adaptively(self) -> None:
+        width = 8
+        height = 4
+        dark_frame = np.full((height, width, 3), 20, dtype=np.uint8)
+        buffer = _FakeBuffer(dark_frame.tobytes())
+        sink = _FakeSink([_FakeSample(buffer)])
+        pipeline = _FakePipeline(sink)
+        gst = _FakeGst(pipeline)
+
+        with patch.dict(
+            os.environ,
+            {
+                "ATTENDANCE_CAMERA_AUTO_BRIGHTNESS_TARGET": "115",
+                "ATTENDANCE_CAMERA_ROTATE_180": "false",
+                "ATTENDANCE_CAMERA_FLIP_CODE": "none",
+            },
+            clear=False,
+        ):
+            with patch("src.camera._load_gst", return_value=gst):
+                camera = CameraStream(width=width, height=height, framerate=60)
+                camera.start()
+                ok, frame = camera.read()
+
+        self.assertTrue(ok)
+        self.assertGreater(float(frame.mean()), float(dark_frame.mean()))
 
     def test_read_returns_false_when_pipeline_yields_no_sample(self) -> None:
         sink = _FakeSink([None])

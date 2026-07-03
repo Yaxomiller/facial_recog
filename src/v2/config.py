@@ -50,9 +50,11 @@ MATCH_CONFIRMATION_FRAMES = int(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_FRAMES"
 # devices a single recognition round-trip can take >1s, so 2s made pending
 # matches expire mid-confirmation and identification never completed.
 MATCH_CONFIRMATION_WINDOW_SECONDS = int(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_WINDOW_SECONDS", "6"))
-FAST_ACCEPT_SCORE = float(os.getenv("ATTENDANCE_FAST_ACCEPT_SCORE", "0.94"))
-MATCH_CONFIRMATION_MIN_AVG_SCORE = float(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_MIN_AVG_SCORE", "0.76"))
-MATCH_CONFIRMATION_MIN_BEST_SCORE = float(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_MIN_BEST_SCORE", "0.78"))
+# Fast accept still requires >=2 consecutive agreeing frames (see
+# _confirm_match_candidate); this is the per-frame score bar for that path.
+FAST_ACCEPT_SCORE = float(os.getenv("ATTENDANCE_FAST_ACCEPT_SCORE", "0.97"))
+MATCH_CONFIRMATION_MIN_AVG_SCORE = float(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_MIN_AVG_SCORE", "0.80"))
+MATCH_CONFIRMATION_MIN_BEST_SCORE = float(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_MIN_BEST_SCORE", "0.84"))
 OPEN_SET_MIN_SCORE = float(os.getenv("ATTENDANCE_OPEN_SET_MIN_SCORE", "0.72"))
 OPEN_SET_SUPPORT_SCORE = float(os.getenv("ATTENDANCE_OPEN_SET_SUPPORT_SCORE", "0.66"))
 OPEN_SET_MIN_CENTROID_SCORE = min(0.70, float(os.getenv("ATTENDANCE_OPEN_SET_MIN_CENTROID_SCORE", "0.70")))

@@ -184,10 +184,6 @@ class ScalableAttendanceService:
         score: float,
         strict_mode: bool = False,
     ) -> tuple[bool, float, Optional[str]]:
-        if not strict_mode and score >= FAST_ACCEPT_SCORE:
-            self.pending_matches.pop(camera_id, None)
-            return True, score, None
-
         self._purge_pending_matches()
         now = datetime.utcnow()
         state = self.pending_matches.get(camera_id)
@@ -219,6 +215,19 @@ class ScalableAttendanceService:
         state.min_score = min(state.min_score, score)
         state.expires_at = expires_at
         self.pending_matches[camera_id] = state
+
+        # Fast accept: near-perfect score, but never on a single frame. At
+        # least two consecutive sightings of the same identity with a strong
+        # running average are required, so one fluke frame can never mark
+        # attendance by itself.
+        if (
+            not strict_mode
+            and score >= FAST_ACCEPT_SCORE
+            and state.count >= 2
+            and (state.total_score / state.count) >= min_best_score
+        ):
+            del self.pending_matches[camera_id]
+            return True, score, None
 
         if state.count < required_frames:
             return False, state.best_score, None
@@ -1226,10 +1235,6 @@ class ScalableAttendanceService:
                 debug_entry.reason = descriptor_consensus.rejection_reason or "Rejected: descriptor verification failed."
                 debug_faces.append(debug_entry)
                 continue
-            if eyes_detected > 0:
-                lbph_score = min(1.0, lbph_score + 0.04)
-                descriptor_score = min(1.0, descriptor_score + 0.03)
-
             candidate_scores: dict[int, float] = {}
             if worker_id is not None:
                 candidate_scores[worker_id] = max(candidate_scores.get(worker_id, 0.0), lbph_score)

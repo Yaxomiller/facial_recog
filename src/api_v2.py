@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import datetime
 import os
 from pathlib import Path
+import threading
 import time
 from typing import Optional
 
@@ -295,10 +296,48 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+_LOGIN_LOCKOUT_MAX_FAILURES = int(os.getenv("ATTENDANCE_LOGIN_LOCKOUT_MAX_FAILURES", "5"))
+_LOGIN_LOCKOUT_SECONDS = int(os.getenv("ATTENDANCE_LOGIN_LOCKOUT_SECONDS", "600"))
+_login_failures: dict[str, list[float]] = {}
+_login_failures_lock = threading.Lock()
+
+
+def _login_lockout_remaining(username: str) -> int:
+    now = time.monotonic()
+    with _login_failures_lock:
+        recent = [stamp for stamp in _login_failures.get(username, []) if now - stamp < _LOGIN_LOCKOUT_SECONDS]
+        _login_failures[username] = recent
+        if len(recent) >= _LOGIN_LOCKOUT_MAX_FAILURES:
+            return int(_LOGIN_LOCKOUT_SECONDS - (now - recent[0])) + 1
+    return 0
+
+
+def _record_login_failure(username: str) -> None:
+    with _login_failures_lock:
+        _login_failures.setdefault(username, []).append(time.monotonic())
+
+
+def _clear_login_failures(username: str) -> None:
+    with _login_failures_lock:
+        _login_failures.pop(username, None)
+
+
 @app.post("/api/v2/auth/login", response_model=LoginResponse)
 def login(payload: LoginRequest) -> LoginResponse:
+    username_key = payload.username.strip().lower()
+    lockout_remaining = _login_lockout_remaining(username_key)
+    if lockout_remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many failed login attempts. "
+                f"Try again in {max(1, (lockout_remaining + 59) // 60)} minute(s)."
+            ),
+        )
     if not authenticate_admin(payload.username, payload.password):
+        _record_login_failure(username_key)
         raise HTTPException(status_code=401, detail="Invalid username or password.")
+    _clear_login_failures(username_key)
     session = session_store.create_session(payload.username)
     return LoginResponse(token=session.session_id, username=session.username, expires_at=session.expires_at)
 

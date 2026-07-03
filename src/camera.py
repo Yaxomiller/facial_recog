@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from typing import Optional
 
@@ -76,6 +77,20 @@ def _default_rotate_code() -> Optional[int]:
 
 def _default_flip_code() -> Optional[int]:
     return _flip_code()
+
+
+def _auto_brightness_target() -> float:
+    # Target mean luma for adaptive exposure compensation. The Allwinner ISP's
+    # auto-exposure often under-exposes faces; dark faces lose the detail that
+    # separates one person from another, hurting both preview quality and
+    # recognition accuracy. Set to 0/off to disable.
+    raw = os.getenv("ATTENDANCE_CAMERA_AUTO_BRIGHTNESS_TARGET", "115").strip().lower()
+    if raw in {"", "0", "off", "false", "none", "disable", "disabled"}:
+        return 0.0
+    try:
+        return max(0.0, min(200.0, float(raw)))
+    except ValueError:
+        return 115.0
 
 _GST = None
 
@@ -182,6 +197,10 @@ class CameraStream:
             if os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
             else f"GStreamer pipeline ({resolved_device_path})"
         )
+        self.auto_brightness_target = _auto_brightness_target()
+        self._gamma = 1.0
+        self._gamma_lut: Optional[np.ndarray] = None
+        self._gamma_lut_value = 1.0
         self._gst = None
         self._pipeline = None
         self._sink = None
@@ -270,9 +289,36 @@ class CameraStream:
                 decoded = cv2.rotate(decoded, rotate_code)
             if flip_code is not None:
                 decoded = cv2.flip(decoded, flip_code)
-            return decoded
+            return self._apply_auto_brightness(decoded)
         finally:
             buffer.unmap(mapinfo)
+
+    def _apply_auto_brightness(self, frame: np.ndarray) -> np.ndarray:
+        target = self.auto_brightness_target
+        if target <= 0.0:
+            return frame
+
+        # Green channel on a sparse subsample approximates luma at negligible
+        # cost. Gamma correction lifts shadows without clipping highlights the
+        # way a linear gain would.
+        mean_luma = max(1.0, float(frame[::16, ::16, 1].mean()))
+        if mean_luma >= target:
+            desired_gamma = 1.0
+        else:
+            desired_gamma = math.log(target / 255.0) / math.log(mean_luma / 255.0)
+            desired_gamma = max(0.45, min(1.0, desired_gamma))
+
+        # Smooth gamma changes across frames so the exposure does not flicker.
+        self._gamma += (desired_gamma - self._gamma) * 0.25
+        if self._gamma > 0.995:
+            return frame
+
+        if self._gamma_lut is None or abs(self._gamma - self._gamma_lut_value) > 0.01:
+            scale = np.arange(256, dtype=np.float32) / 255.0
+            self._gamma_lut = np.clip(np.power(scale, self._gamma) * 255.0, 0.0, 255.0).astype(np.uint8)
+            self._gamma_lut_value = self._gamma
+
+        return cv2.LUT(frame, self._gamma_lut)
 
     def read(self) -> tuple[bool, object]:
         frame = self.get_frame()
