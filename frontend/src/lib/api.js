@@ -223,6 +223,15 @@ export const apiClient = {
     const suffix = search.toString();
     return resolveRequestUrl(`/api/v2/local-camera/frame${suffix ? `?${suffix}` : ""}`);
   },
+  localCameraStreamUrl(token) {
+    const resolvedToken = resolveToken(token);
+    const search = new URLSearchParams();
+    if (resolvedToken) {
+      search.set("token", resolvedToken);
+    }
+    search.set("ts", String(Date.now()));
+    return resolveRequestUrl(`/api/v2/local-camera/stream.mjpg?${search.toString()}`);
+  },
   recognize(token, body) {
     return request("/api/v2/recognitions", {
       method: "POST",

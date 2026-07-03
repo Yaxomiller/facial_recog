@@ -159,31 +159,33 @@ class CameraTests(unittest.TestCase):
         self.assertEqual(camera.source_name, "Configured GStreamer pipeline")
         self.assertEqual(gst.pipeline_description, configured_pipeline)
 
-    def test_read_decodes_bgr_frame_and_applies_rotation_and_flip(self) -> None:
+    def test_read_decodes_bgr_frame_and_folds_rotation_into_single_flip(self) -> None:
         width = 8
         height = 4
         buffer = _FakeBuffer(_bgr_bytes(width, height))
         sink = _FakeSink([_FakeSample(buffer)])
         pipeline = _FakePipeline(sink)
         gst = _FakeGst(pipeline)
-        rotated = np.ones((height, width, 3), dtype=np.uint8)
         flipped = np.full((height, width, 3), 2, dtype=np.uint8)
 
         with patch("src.camera._load_gst", return_value=gst):
             camera = CameraStream(width=width, height=height, framerate=60)
             camera.start()
 
-        with patch("src.camera.cv2.rotate", return_value=rotated) as rotate:
+        # Default transform is rotate-180 + horizontal flip, which the reader
+        # folds into a single vertical flip (rotate180 == flip(-1); flip(-1)
+        # then flip(1) == flip(0)).
+        with patch("src.camera.cv2.rotate") as rotate:
             with patch("src.camera.cv2.flip", return_value=flipped) as flip:
                 ok, frame = camera.read()
 
         self.assertTrue(ok)
         self.assertIs(frame, flipped)
         self.assertEqual(sink.emit_calls[0][0], "try-pull-sample")
-        rotate.assert_called_once()
-        self.assertEqual(rotate.call_args.args[0].shape, (height, width, 3))
-        self.assertEqual(rotate.call_args.args[1], cv2.ROTATE_180)
-        flip.assert_called_once_with(rotated, 1)
+        rotate.assert_not_called()
+        flip.assert_called_once()
+        self.assertEqual(flip.call_args.args[0].shape, (height, width, 3))
+        self.assertEqual(flip.call_args.args[1], 0)
         self.assertTrue(buffer.unmapped)
 
     def test_read_rejects_frame_with_unexpected_size(self) -> None:

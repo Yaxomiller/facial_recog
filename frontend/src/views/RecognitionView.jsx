@@ -5,12 +5,11 @@ import { drawBoxes, frameToBlob, isMediaReady, startUserCamera, stopLive } from 
 
 const CAMERA_ID = "device-front-camera";
 const EXHALE_SECONDS = 10;
-const DETECTION_INTERVAL_MS = 500;
-const RECOGNITION_INTERVAL_MS = 1200;
+const SCAN_LOOP_DELAY_MS = 250;
 const EXHALE_FACE_CHECK_INTERVAL_MS = 3000;
-const STABLE_SINGLE_FACE_FRAMES = 2;
+const STABLE_SINGLE_FACE_FRAMES = 1;
 const DETECTION_FRAME_MAX_WIDTH = 960;
-const RECOGNITION_FRAME_MAX_WIDTH = 1280;
+const RECOGNITION_FRAME_MAX_WIDTH = 960;
 
 export default function RecognitionView({ token, onUpdated, onSessionExpired = () => {} }) {
   const [message, setMessage] = useState("Press start to scan a face.");
@@ -109,7 +108,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   async function captureRecognitionFrame() {
     const blob = await captureFrameBlob({
       maxWidth: RECOGNITION_FRAME_MAX_WIDTH,
-      quality: 0.88,
+      quality: 0.85,
     });
     if (!blob) {
       return null;
@@ -172,42 +171,37 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
 
       requestInFlightRef.current = true;
       try {
-        const detectionResult = await captureDetectionFrame();
-        if (!detectionResult) {
-          return;
-        }
-
-        const detectedFaces = detectionResult.detected_faces || 0;
-        if (detectedFaces === 0) {
-          resetScanProgress();
-          clearRecognitionFailure();
-          setMessage("No face detected.");
-          return;
-        }
-
-        if (detectedFaces > 1) {
-          resetScanProgress();
-          handleRecognitionFailure(
-            "Only one employee can be scanned at a time.",
-            "Multiple faces detected. Keep one person in front of the camera.",
-          );
-          return;
-        }
-
-        stableSingleFaceFramesRef.current += 1;
-        clearRecognitionFailure();
-        setMessage("Face detected. Hold still while identity is checked.");
-
+        // Detection phase: cheap face-presence check until exactly one face
+        // is in view. Once locked, every subsequent cycle goes straight to
+        // recognition (which detects internally) — no duplicate scanning.
         if (stableSingleFaceFramesRef.current < STABLE_SINGLE_FACE_FRAMES) {
-          return;
+          const detectionResult = await captureDetectionFrame();
+          if (!detectionResult) {
+            return;
+          }
+
+          const detectedFaces = detectionResult.detected_faces || 0;
+          if (detectedFaces === 0) {
+            resetScanProgress();
+            clearRecognitionFailure();
+            setMessage("No face detected.");
+            return;
+          }
+
+          if (detectedFaces > 1) {
+            resetScanProgress();
+            handleRecognitionFailure(
+              "Only one employee can be scanned at a time.",
+              "Multiple faces detected. Keep one person in front of the camera.",
+            );
+            return;
+          }
+
+          stableSingleFaceFramesRef.current += 1;
+          clearRecognitionFailure();
+          setMessage("Face detected. Hold still while identity is checked.");
         }
 
-        const now = Date.now();
-        if (now - lastRecognitionAttemptRef.current < RECOGNITION_INTERVAL_MS) {
-          return;
-        }
-
-        lastRecognitionAttemptRef.current = now;
         const result = await captureRecognitionFrame();
         if (!result) {
           return;
@@ -254,7 +248,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
         if (streamRef.current && !identifiedMatchRef.current && !exhalingRef.current) {
           timerRef.current = window.setTimeout(() => {
             void runScan();
-          }, DETECTION_INTERVAL_MS);
+          }, SCAN_LOOP_DELAY_MS);
         }
       }
     };

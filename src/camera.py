@@ -259,10 +259,17 @@ class CameraStream:
                 )
 
             decoded = data.reshape((self.height, self.width, 3))
-            if self.rotate_code is not None:
-                decoded = cv2.rotate(decoded, self.rotate_code)
-            if self.flip_code is not None:
-                decoded = cv2.flip(decoded, self.flip_code)
+            rotate_code = self.rotate_code
+            flip_code = self.flip_code
+            if rotate_code == cv2.ROTATE_180 and flip_code in (1, 0, -1):
+                # rotate180 == flip(-1); fold it into the configured flip so
+                # the frame is transformed in a single memory pass.
+                rotate_code = None
+                flip_code = {1: 0, 0: 1, -1: None}[flip_code]
+            if rotate_code is not None:
+                decoded = cv2.rotate(decoded, rotate_code)
+            if flip_code is not None:
+                decoded = cv2.flip(decoded, flip_code)
             return decoded
         finally:
             buffer.unmap(mapinfo)

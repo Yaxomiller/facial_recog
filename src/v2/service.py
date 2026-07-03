@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 
 from src.breath_analyzer import resolve_breath_analyzer
-from src.vision import detect_eyes
 from src.v2 import repository
 from src.v2.cache import RecognitionCache
 from src.v2.config import (
@@ -1205,7 +1204,7 @@ class ScalableAttendanceService:
                     )
                 )
                 continue
-            normalized_face = self._prepare_lbph_face(face_crop)
+            normalized_face, eyes_detected = self._prepare_lbph_face_with_eyes(face_crop)
             descriptor_consensus = self._descriptor_consensus(face_crop, top_k=min(MAX_TOP_K, 5))
             predicted_label, raw_confidence = self.lbph_recognizer.predict(normalized_face)
             worker_id = self.lbph_label_to_worker_id.get(int(predicted_label))
@@ -1213,7 +1212,6 @@ class ScalableAttendanceService:
             descriptor_score = descriptor_consensus.best_score
             second_descriptor_score = descriptor_consensus.second_score
             lbph_score = self._lbph_score(raw_confidence)
-            eyes_detected = len(detect_eyes(normalized_face))
             debug_entry = FaceDebug(
                 face_index=face_index,
                 accepted=False,
@@ -1347,6 +1345,12 @@ class ScalableAttendanceService:
     def _prepare_lbph_face(self, face_image: np.ndarray) -> np.ndarray:
         aligned, _eyes_detected = align_face_by_eyes(face_image, FACE_SIZE)
         return aligned
+
+    def _prepare_lbph_face_with_eyes(self, face_image: np.ndarray) -> tuple[np.ndarray, int]:
+        # Alignment already runs the eye cascade; reuse its count instead of
+        # paying for a second full cascade pass per frame.
+        aligned, eyes_detected = align_face_by_eyes(face_image, FACE_SIZE)
+        return aligned, eyes_detected
 
     def _lbph_score(self, raw_confidence: float) -> float:
         return float(max(0.0, min(1.0, 1.0 - (raw_confidence / 120.0))))

@@ -46,7 +46,10 @@ BREATH_ADC_TO_CANNABIS_OFFSET = float(os.getenv("ATTENDANCE_BREATH_ADC_TO_CANNAB
 ALLOW_BACKEND_FALLBACK = os.getenv("ATTENDANCE_ALLOW_BACKEND_FALLBACK", "true").lower() in {"1", "true", "yes", "on"}
 LBPH_CONFIDENCE_THRESHOLD = float(os.getenv("ATTENDANCE_LBPH_CONFIDENCE_THRESHOLD", "78"))
 MATCH_CONFIRMATION_FRAMES = int(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_FRAMES", "4"))
-MATCH_CONFIRMATION_WINDOW_SECONDS = int(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_WINDOW_SECONDS", "2"))
+# Rolling gap allowance between consecutive confirmation frames. On embedded
+# devices a single recognition round-trip can take >1s, so 2s made pending
+# matches expire mid-confirmation and identification never completed.
+MATCH_CONFIRMATION_WINDOW_SECONDS = int(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_WINDOW_SECONDS", "6"))
 FAST_ACCEPT_SCORE = float(os.getenv("ATTENDANCE_FAST_ACCEPT_SCORE", "0.94"))
 MATCH_CONFIRMATION_MIN_AVG_SCORE = float(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_MIN_AVG_SCORE", "0.76"))
 MATCH_CONFIRMATION_MIN_BEST_SCORE = float(os.getenv("ATTENDANCE_MATCH_CONFIRMATION_MIN_BEST_SCORE", "0.78"))

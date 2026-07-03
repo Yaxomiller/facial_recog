@@ -10,7 +10,7 @@ import cv2
 from src.camera import CameraStream, open_camera
 
 
-JPEG_QUALITY = max(40, min(100, int(os.getenv("ATTENDANCE_LOCAL_CAMERA_JPEG_QUALITY", "88"))))
+JPEG_QUALITY = max(40, min(100, int(os.getenv("ATTENDANCE_LOCAL_CAMERA_JPEG_QUALITY", "80"))))
 STARTUP_TIMEOUT_SECONDS = max(0.5, float(os.getenv("ATTENDANCE_LOCAL_CAMERA_STARTUP_TIMEOUT_SECONDS", "4.0")))
 
 

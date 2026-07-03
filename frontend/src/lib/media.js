@@ -168,6 +168,36 @@ async function startBackendCamera(token, imageRef, streamRef) {
     );
 
   const backendStatus = await apiClient.startLocalCamera(token);
+
+  // Prefer the MJPEG stream: one persistent connection the browser decodes
+  // natively, instead of a fresh HTTP request per frame. Much smoother and
+  // lower latency on embedded devices. Fall back to frame polling on error.
+  try {
+    await loadImageSource(
+      previewImage,
+      apiClient.localCameraStreamUrl(token),
+      "Could not open the camera stream.",
+    );
+    const streamSession = {
+      mode: "backend-stream",
+      stopRequested: false,
+      stop() {
+        if (this.stopRequested) {
+          return;
+        }
+        this.stopRequested = true;
+        clearImagePreview(imageRef);
+        void apiClient.stopLocalCamera(token).catch(() => {});
+      },
+    };
+    streamRef.current = streamSession;
+    return {
+      mode: "backend",
+      sourceName: backendStatus?.source_name || "gstreamer-camera",
+    };
+  } catch (_streamError) {
+    // Stream endpoint unavailable — fall through to frame polling below.
+  }
   const backendSession = {
     mode: "backend",
     stopRequested: false,
