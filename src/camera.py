@@ -55,15 +55,15 @@ def _default_device_path() -> str:
 
 
 def _default_width() -> int:
-    return _int_env("ATTENDANCE_CAMERA_WIDTH", 1920)
+    return _int_env("ATTENDANCE_CAMERA_WIDTH", 1280)
 
 
 def _default_height() -> int:
-    return _int_env("ATTENDANCE_CAMERA_HEIGHT", 1080)
+    return _int_env("ATTENDANCE_CAMERA_HEIGHT", 720)
 
 
 def _default_framerate() -> int:
-    return _int_env("ATTENDANCE_CAMERA_FRAMERATE", 60)
+    return _int_env("ATTENDANCE_CAMERA_FRAMERATE", 30)
 
 
 def _default_timeout_seconds() -> float:
@@ -107,9 +107,8 @@ def _build_pipeline_description(device_path: str, width: int, height: int, frame
         return configured_pipeline
 
     return (
-        f"v4l2src device={device_path} "
-        "en-awisp=1 en-largemode=0 ! "
-        f"video/x-raw,format=I420,width={width},height={height},framerate={framerate}/1 ! "
+        f"v4l2src device={device_path} ! "
+        f"video/x-raw,format=BGR,width={width},height={height},framerate={framerate}/1 ! "
         "appsink name=sink emit-signals=true max-buffers=1 drop=true"
     )
 
@@ -196,16 +195,14 @@ class CameraStream:
 
         try:
             data = np.frombuffer(mapinfo.data, dtype=np.uint8)
-            expected_rows = self.height * 3 // 2
-            expected_size = expected_rows * self.width
+            expected_size = self.height * self.width * 3
             if data.size != expected_size:
                 raise RuntimeError(
                     f"Camera returned an unexpected frame size for {self.source_name}. "
-                    f"Expected {expected_size} bytes, received {data.size}."
+                    f"Expected {expected_size} bytes ({self.width}x{self.height} BGR), received {data.size}."
                 )
 
-            frame = data.reshape((expected_rows, self.width))
-            decoded = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
+            decoded = data.reshape((self.height, self.width, 3))
             if self.rotate_code is not None:
                 decoded = cv2.rotate(decoded, self.rotate_code)
             if self.flip_code is not None:
