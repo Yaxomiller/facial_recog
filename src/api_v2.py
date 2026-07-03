@@ -193,6 +193,20 @@ session_store = get_session_store()
 local_camera_proxy = LocalCameraProxy()
 
 
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc: Exception) -> JSONResponse:
+    # Without this, Starlette returns a bare "Internal Server Error" as
+    # text/plain and the real reason only appears in the server log. Return
+    # JSON with the actual message so the operator UI can show what went wrong.
+    import traceback
+
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
+
+
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
 

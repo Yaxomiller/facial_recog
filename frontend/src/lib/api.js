@@ -79,6 +79,14 @@ async function parseApiResponse(response, requestUrl) {
     );
   }
 
+  // Plain-text bodies are almost always an error (e.g. a server "Internal
+  // Server Error" or a validation message). If the request failed, surface the
+  // body itself so the real reason reaches the operator instead of a generic
+  // "expected JSON" message.
+  if (!response.ok) {
+    throw new ApiError(trimmedText || `Request failed with status ${response.status}.`, response.status || 500);
+  }
+
   throw new ApiError(
     `Expected JSON from the device service, but received ${contentType || "a non-JSON response"} instead.`,
     response.status || 500,
