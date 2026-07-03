@@ -54,6 +54,15 @@ def _frontend_dist_available() -> bool:
     return (FRONTEND_DIST_DIR / "index.html").exists() and (FRONTEND_DIST_DIR / "assets").exists()
 
 
+def _frontend_toolchain_available() -> bool:
+    # A build can only run when the dev dependencies are installed. Checking for
+    # the vite binary avoids launching npm on deployment devices (e.g. the
+    # Radxa) just to fail with "vite: not found". The committed dist is the
+    # correct bundle for the checked-out commit, so those devices never build.
+    bin_dir = FRONTEND_DIR / "node_modules" / ".bin"
+    return (bin_dir / "vite").exists() or (bin_dir / "vite.cmd").exists()
+
+
 def ensure_react_frontend_built() -> None:
     if os.getenv("ATTENDANCE_SKIP_FRONTEND_BUILD", "").strip().lower() in {"1", "true", "yes", "on"}:
         return
@@ -62,18 +71,30 @@ def ensure_react_frontend_built() -> None:
         return
 
     npm_command = shutil.which("npm.cmd") or shutil.which("npm")
-    if not npm_command:
+    if not npm_command or not _frontend_toolchain_available():
         if _frontend_dist_available():
-            print("Frontend changes were detected, but npm is unavailable. Using the existing prebuilt React bundle.")
+            print(
+                "Frontend changes were detected, but the build toolchain "
+                "(npm/vite dependencies) is unavailable. Using the committed "
+                "prebuilt React bundle."
+            )
             return
         raise RuntimeError(
-            "The React frontend needs a built `frontend/dist`, but npm is unavailable.\n"
+            "The React frontend needs a built `frontend/dist`, but the build toolchain is unavailable.\n"
             "Run `cd frontend && npm install && npm run build` on your development machine."
         )
 
     print("Frontend changes detected. Building the React UI...")
-    subprocess.run(
-        [npm_command, "run", "build"],
-        cwd=FRONTEND_DIR,
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [npm_command, "run", "build"],
+            cwd=FRONTEND_DIR,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        # A build failure must never take down a device that already has a
+        # valid prebuilt bundle — fall back to it instead of crashing startup.
+        if _frontend_dist_available():
+            print(f"Frontend build failed ({exc}); using the committed prebuilt React bundle instead.")
+            return
+        raise
