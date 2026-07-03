@@ -5,8 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from src.native_react_app import NativeShellUnavailable
-from src.tauri_react_app import find_tauri_binary, launch_tauri_react_app
+from src.tauri_react_app import NativeShellUnavailable, find_tauri_binary, launch_tauri_react_app
 
 
 class TauriReactAppTests(unittest.TestCase):

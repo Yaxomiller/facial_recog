@@ -364,18 +364,6 @@ class ScalableAttendanceService:
             for worker_id, _votes, avg_score, peak in ranked_candidates[:3]
         ]
 
-        if variant_hits < min(DESCRIPTOR_VARIANT_REQUIRED_HITS, len(variants)):
-            return DescriptorConsensus(
-                worker_id=None,
-                best_score=max(average_variant_score, peak_score),
-                second_score=second_score,
-                support_scores=worker_support_scores.get(best_worker_id, []),
-                representative_embedding=representative_embedding,
-                variant_hits=variant_hits,
-                candidates=candidates,
-                rejection_reason="Rejected: face match was not stable across repeated descriptor checks.",
-            )
-
         if len(ranked_candidates) > 1 and ranked_candidates[1][1] == variant_hits:
             return DescriptorConsensus(
                 worker_id=None,
@@ -386,6 +374,18 @@ class ScalableAttendanceService:
                 variant_hits=variant_hits,
                 candidates=candidates,
                 rejection_reason="Rejected: repeated descriptor checks disagreed on the employee identity.",
+            )
+
+        if variant_hits < min(DESCRIPTOR_VARIANT_REQUIRED_HITS, len(variants)):
+            return DescriptorConsensus(
+                worker_id=None,
+                best_score=max(average_variant_score, peak_score),
+                second_score=second_score,
+                support_scores=worker_support_scores.get(best_worker_id, []),
+                representative_embedding=representative_embedding,
+                variant_hits=variant_hits,
+                candidates=candidates,
+                rejection_reason="Rejected: face match was not stable across repeated descriptor checks.",
             )
 
         return DescriptorConsensus(
@@ -768,15 +768,27 @@ class ScalableAttendanceService:
         if len(image_bytes_list) < MIN_ENROLLMENT_IMAGES:
             raise RuntimeError(f"Enrollment requires at least {MIN_ENROLLMENT_IMAGES} face images.")
 
+        # Validate and embed every photo BEFORE touching the database so a bad
+        # photo cannot leave the worker half-enrolled (old embeddings deleted,
+        # only some new ones stored).
+        prepared_samples: list[tuple[np.ndarray, Optional[bytes]]] = []
+        for photo_index, image_bytes in enumerate(image_bytes_list, start=1):
+            try:
+                image = _decode_image(image_bytes)
+                face = self._extract_enrollment_face(image)
+                embedding = self.embedder.embed(face)
+                encoded_face = _encode_training_face(
+                    self._prepare_lbph_face(face) if self.embedder.name == "lbph" else None
+                )
+            except RuntimeError as exc:
+                raise RuntimeError(f"Photo {photo_index} of {len(image_bytes_list)}: {exc}") from exc
+            prepared_samples.append((embedding, encoded_face))
+
         worker = repository.upsert_worker(employee_code=employee_code, name=name)
         if replace_existing:
             repository.delete_embeddings_for_worker(worker["id"])
         added = 0
-        for image_bytes in image_bytes_list:
-            image = _decode_image(image_bytes)
-            face = self._extract_enrollment_face(image)
-            embedding = self.embedder.embed(face)
-            encoded_face = _encode_training_face(self._prepare_lbph_face(face) if self.embedder.name == "lbph" else None)
+        for embedding, encoded_face in prepared_samples:
             repository.store_embedding(
                 worker["id"],
                 embedding,

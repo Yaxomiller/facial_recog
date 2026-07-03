@@ -26,3 +26,7 @@ node_modules/
 node_modules/
 node_modules/
 frontend/node_modules/
+
+data/session_store.db
+data/*.db-wal
+data/*.db-shm

@@ -63,11 +63,15 @@ class _FakePipeline:
     def set_state(self, state: str) -> None:
         self.states.append(state)
 
+    def get_state(self, _timeout_ns: int):
+        return "success", "playing", "void-pending"
+
 
 class _FakeGst:
     SECOND = 1_000_000_000
     MapFlags = SimpleNamespace(READ="read")
     State = SimpleNamespace(PLAYING="playing", NULL="null")
+    StateChangeReturn = SimpleNamespace(FAILURE="failure", SUCCESS="success")
 
     def __init__(self, pipeline: _FakePipeline) -> None:
         self.pipeline = pipeline
@@ -78,12 +82,12 @@ class _FakeGst:
         return self.pipeline
 
 
-def _i420_bytes(width: int, height: int) -> bytes:
-    return np.zeros((height * 3 // 2, width), dtype=np.uint8).tobytes()
+def _bgr_bytes(width: int, height: int) -> bytes:
+    return np.zeros((height, width, 3), dtype=np.uint8).tobytes()
 
 
 class CameraTests(unittest.TestCase):
-    def test_open_camera_builds_sample_style_gstreamer_pipeline(self) -> None:
+    def test_open_camera_builds_awisp_gstreamer_pipeline(self) -> None:
         sink = _FakeSink([None])
         pipeline = _FakePipeline(sink)
         gst = _FakeGst(pipeline)
@@ -104,11 +108,38 @@ class CameraTests(unittest.TestCase):
 
         self.assertEqual(camera.source_name, "GStreamer pipeline (/dev/video7)")
         self.assertIn("v4l2src device=/dev/video7", gst.pipeline_description)
+        self.assertIn("en-awisp=1", gst.pipeline_description)
         self.assertIn("format=I420", gst.pipeline_description)
         self.assertIn("width=1280", gst.pipeline_description)
         self.assertIn("height=720", gst.pipeline_description)
-        self.assertIn("framerate=45/1", gst.pipeline_description)
+        self.assertIn("max-rate=45", gst.pipeline_description)
+        self.assertIn("videoconvert", gst.pipeline_description)
+        self.assertIn("format=BGR", gst.pipeline_description)
+        self.assertIn("sync=false", gst.pipeline_description)
         self.assertEqual(pipeline.states, ["playing"])
+
+    def test_open_camera_falls_back_to_plain_pipeline_when_awisp_is_unavailable(self) -> None:
+        sink = _FakeSink([None])
+        plain_pipeline = _FakePipeline(sink)
+        gst = _FakeGst(plain_pipeline)
+        descriptions: list[str] = []
+
+        def parse_launch(description: str) -> _FakePipeline:
+            descriptions.append(description)
+            if "en-awisp" in description:
+                raise RuntimeError("no property named en-awisp")
+            return plain_pipeline
+
+        gst.parse_launch = parse_launch
+
+        with patch.dict(os.environ, {"ATTENDANCE_CAMERA_PIPELINE": ""}, clear=False):
+            with patch("src.camera._load_gst", return_value=gst):
+                camera = open_camera()
+
+        self.assertEqual(len(descriptions), 2)
+        self.assertIn("en-awisp=1", descriptions[0])
+        self.assertNotIn("en-awisp", descriptions[1])
+        self.assertNotIn("en-awisp", camera.pipeline_description)
 
     def test_open_camera_uses_configured_pipeline_verbatim(self) -> None:
         sink = _FakeSink([None])
@@ -128,14 +159,13 @@ class CameraTests(unittest.TestCase):
         self.assertEqual(camera.source_name, "Configured GStreamer pipeline")
         self.assertEqual(gst.pipeline_description, configured_pipeline)
 
-    def test_read_decodes_i420_frame_and_applies_rotation_and_flip(self) -> None:
+    def test_read_decodes_bgr_frame_and_applies_rotation_and_flip(self) -> None:
         width = 8
         height = 4
-        buffer = _FakeBuffer(_i420_bytes(width, height))
+        buffer = _FakeBuffer(_bgr_bytes(width, height))
         sink = _FakeSink([_FakeSample(buffer)])
         pipeline = _FakePipeline(sink)
         gst = _FakeGst(pipeline)
-        decoded = np.zeros((height, width, 3), dtype=np.uint8)
         rotated = np.ones((height, width, 3), dtype=np.uint8)
         flipped = np.full((height, width, 3), 2, dtype=np.uint8)
 
@@ -143,17 +173,33 @@ class CameraTests(unittest.TestCase):
             camera = CameraStream(width=width, height=height, framerate=60)
             camera.start()
 
-        with patch("src.camera.cv2.cvtColor", return_value=decoded) as cvt_color:
-            with patch("src.camera.cv2.rotate", return_value=rotated) as rotate:
-                with patch("src.camera.cv2.flip", return_value=flipped) as flip:
-                    ok, frame = camera.read()
+        with patch("src.camera.cv2.rotate", return_value=rotated) as rotate:
+            with patch("src.camera.cv2.flip", return_value=flipped) as flip:
+                ok, frame = camera.read()
 
         self.assertTrue(ok)
         self.assertIs(frame, flipped)
         self.assertEqual(sink.emit_calls[0][0], "try-pull-sample")
-        cvt_color.assert_called_once()
-        rotate.assert_called_once_with(decoded, cv2.ROTATE_180)
+        rotate.assert_called_once()
+        self.assertEqual(rotate.call_args.args[0].shape, (height, width, 3))
+        self.assertEqual(rotate.call_args.args[1], cv2.ROTATE_180)
         flip.assert_called_once_with(rotated, 1)
+        self.assertTrue(buffer.unmapped)
+
+    def test_read_rejects_frame_with_unexpected_size(self) -> None:
+        width = 8
+        height = 4
+        buffer = _FakeBuffer(b"\x00" * 10)
+        sink = _FakeSink([_FakeSample(buffer)])
+        pipeline = _FakePipeline(sink)
+        gst = _FakeGst(pipeline)
+
+        with patch("src.camera._load_gst", return_value=gst):
+            camera = CameraStream(width=width, height=height, framerate=60)
+            camera.start()
+            with self.assertRaisesRegex(RuntimeError, "unexpected frame size"):
+                camera.get_frame()
+
         self.assertTrue(buffer.unmapped)
 
     def test_read_returns_false_when_pipeline_yields_no_sample(self) -> None:

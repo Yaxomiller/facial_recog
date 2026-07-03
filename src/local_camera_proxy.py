@@ -108,10 +108,17 @@ class LocalCameraProxy:
                 self._source_name = camera.source_name
                 self._condition.notify_all()
 
+            consecutive_failures = 0
             while not stop_event.is_set():
                 ok, frame = camera.read()
                 if not ok:
-                    raise RuntimeError("Could not read frame from webcam.")
+                    # Tolerate transient stalls (ISP hiccups, USB resets)
+                    # instead of killing the camera thread on one bad read.
+                    consecutive_failures += 1
+                    if consecutive_failures >= 5:
+                        raise RuntimeError("Could not read frame from webcam.")
+                    continue
+                consecutive_failures = 0
 
                 encoded_ok, encoded = cv2.imencode(
                     ".jpg",

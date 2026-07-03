@@ -8,7 +8,7 @@ from src.v2.service import ScalableAttendanceService, WorkerProfile
 
 
 class RecognitionGateTests(unittest.TestCase):
-    def _service_with_profile(self, centroid: np.ndarray, sample_count: int = 3, mean_similarity: float = 0.9) -> ScalableAttendanceService:
+    def _service_with_profile(self, centroid: np.ndarray, sample_count: int = 5, mean_similarity: float = 0.9) -> ScalableAttendanceService:
         service = object.__new__(ScalableAttendanceService)
         service.worker_profiles = {
             1: WorkerProfile(
@@ -64,7 +64,7 @@ class RecognitionGateTests(unittest.TestCase):
 
     def test_single_profile_database_rejects_score_below_realistic_floor(self) -> None:
         centroid = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
-        service = self._service_with_profile(centroid, sample_count=3, mean_similarity=0.9)
+        service = self._service_with_profile(centroid, sample_count=5, mean_similarity=0.9)
 
         accepted, reason = service._passes_open_set_gate(
             worker_id=1,
@@ -78,7 +78,7 @@ class RecognitionGateTests(unittest.TestCase):
 
     def test_single_profile_allows_reasonable_centroid_match_when_scores_are_strong(self) -> None:
         centroid = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
-        service = self._service_with_profile(centroid, sample_count=3, mean_similarity=0.97)
+        service = self._service_with_profile(centroid, sample_count=5, mean_similarity=0.97)
 
         accepted, reason = service._passes_open_set_gate(
             worker_id=1,
@@ -92,7 +92,7 @@ class RecognitionGateTests(unittest.TestCase):
 
     def test_single_profile_calibrates_real_match_into_confirmation_band(self) -> None:
         centroid = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
-        service = self._service_with_profile(centroid, sample_count=3, mean_similarity=0.92)
+        service = self._service_with_profile(centroid, sample_count=5, mean_similarity=0.92)
 
         confidence = service._calibrated_match_confidence(
             worker_id=1,
@@ -112,13 +112,13 @@ class RecognitionGateTests(unittest.TestCase):
                 centroid=centroid / np.linalg.norm(centroid),
                 min_similarity=0.94,
                 mean_similarity=0.977,
-                sample_count=3,
+                sample_count=5,
             ),
             2: WorkerProfile(
                 centroid=np.asarray([0.0, 1.0, 0.0], dtype=np.float32),
                 min_similarity=0.90,
                 mean_similarity=0.95,
-                sample_count=3,
+                sample_count=5,
             ),
         }
 
@@ -154,13 +154,13 @@ class RecognitionGateTests(unittest.TestCase):
                 centroid=centroid / np.linalg.norm(centroid),
                 min_similarity=0.92,
                 mean_similarity=0.96,
-                sample_count=4,
+                sample_count=5,
             ),
             2: WorkerProfile(
                 centroid=np.asarray([0.0, 1.0, 0.0], dtype=np.float32),
                 min_similarity=0.90,
                 mean_similarity=0.94,
-                sample_count=4,
+                sample_count=5,
             ),
         }
 
@@ -195,7 +195,7 @@ class RecognitionGateTests(unittest.TestCase):
                 centroid=np.asarray([1.0, 0.0, 0.0], dtype=np.float32),
                 min_similarity=0.9,
                 mean_similarity=0.94,
-                sample_count=3,
+                sample_count=5,
             )
         }
         service.pending_matches = {}
@@ -236,7 +236,7 @@ class RecognitionGateTests(unittest.TestCase):
                 centroid=np.asarray([1.0, 0.0, 0.0], dtype=np.float32),
                 min_similarity=0.9,
                 mean_similarity=0.94,
-                sample_count=3,
+                sample_count=5,
             )
         }
         service.pending_matches = {}

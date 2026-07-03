@@ -3,7 +3,7 @@ import Panel from "../components/Panel";
 import { apiClient } from "../lib/api";
 import { frameToBlob, isMediaReady, startUserCamera, stopStream } from "../lib/media";
 
-const MIN_ENROLLMENT_IMAGES = 3;
+const MIN_ENROLLMENT_IMAGES = 5;
 const CAPTURE_GUIDANCE = [
   "Look straight at the camera.",
   "Turn slightly to the left.",

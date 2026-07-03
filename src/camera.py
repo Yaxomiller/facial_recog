@@ -101,14 +101,31 @@ def _load_gst():
     return Gst
 
 
+def _saturation_element() -> str:
+    raw = os.getenv("ATTENDANCE_CAMERA_SATURATION", "").strip()
+    if not raw:
+        return ""
+    try:
+        saturation = max(0.0, min(2.0, float(raw)))
+    except ValueError:
+        return ""
+    return f"videobalance saturation={saturation} ! "
+
+
 def _build_pipeline_candidates(device_path: str, width: int, height: int, framerate: int) -> list[str]:
     configured_pipeline = os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
     if configured_pipeline:
         return [configured_pipeline]
 
+    # The sensor free-runs at up to 120fps; drop to the target rate BEFORE
+    # videoconvert so the CPU only converts frames we actually use. sync=false
+    # delivers frames as soon as they are ready instead of pacing them against
+    # the pipeline clock, which keeps the preview latency low.
     tail = (
-        "videoconvert ! video/x-raw,format=BGR ! "
-        "appsink name=sink emit-signals=true max-buffers=1 drop=true"
+        f"videorate drop-only=true max-rate={max(1, framerate)} ! "
+        + _saturation_element()
+        + "videoconvert ! video/x-raw,format=BGR ! "
+        "appsink name=sink emit-signals=true max-buffers=1 drop=true sync=false"
     )
     return [
         # en-awisp=1 en-largemode=0 enables the Allwinner ISP path on the Radxa

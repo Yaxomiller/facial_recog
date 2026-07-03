@@ -433,12 +433,17 @@ async def enroll_worker(
     _: SessionState = Depends(require_auth),
 ) -> EnrollmentResult:
     image_bytes = [await image.read() for image in images]
-    return service.enroll_worker(
-        employee_code=employee_code,
-        name=name,
-        image_bytes_list=image_bytes,
-        replace_existing=replace_existing,
-    )
+    try:
+        return service.enroll_worker(
+            employee_code=employee_code,
+            name=name,
+            image_bytes_list=image_bytes,
+            replace_existing=replace_existing,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not enroll the employee: {exc}") from exc
 
 
 @app.delete("/api/v2/workers/{employee_code}", response_model=DeleteWorkerResult)
