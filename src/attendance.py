@@ -55,6 +55,7 @@ def launch_default_app() -> None:
         "  python app.py gui     - Native Python desktop GUI (Tkinter, no browser needed)\n"
         "  python app.py native  - Native Linux desktop app (Tauri shell, must be pre-built)\n"
         "  python app.py kiosk   - React web app in a borderless app-mode browser window\n"
+        "  python app.py simple  - Lightweight terminal UI (same recognition, minimal browser load)\n"
         "\n"
         "Other commands: enroll, train, recognize, export\n"
         "Run `python app.py --help` for full usage.\n"
@@ -135,15 +136,25 @@ def launch_native_desktop_app() -> None:
     launch_tauri_react_app()
 
 
-def launch_web_app(open_browser: bool = True, browser_mode: Optional[str] = None) -> None:
+def launch_web_app(
+    open_browser: bool = True,
+    browser_mode: Optional[str] = None,
+    landing_path: str = "/",
+) -> None:
+    import time
     import uvicorn
 
-    ensure_react_frontend_built()
-    cache_bust = get_react_frontend_build_stamp()
+    if landing_path == "/":
+        ensure_react_frontend_built()
+        cache_bust = get_react_frontend_build_stamp()
+    else:
+        # The simple terminal is a single static HTML file served straight
+        # from disk — no React build required or checked.
+        cache_bust = int(time.time())
     host = get_web_host()
     port = get_web_port()
     browser_host = get_browser_host(host)
-    url = f"http://{browser_host}:{port}/?v={cache_bust}"
+    url = f"http://{browser_host}:{port}{landing_path}?v={cache_bust}"
     resolved_browser_mode = (browser_mode or os.getenv("ATTENDANCE_BROWSER_MODE", "app")).strip().lower() or "app"
     should_open_browser = open_browser and os.getenv("ATTENDANCE_OPEN_BROWSER_ON_START", "true").lower() in {
         "1",
@@ -166,6 +177,10 @@ def handle_web(_: argparse.Namespace) -> None:
 
 def handle_kiosk(_: argparse.Namespace) -> None:
     launch_web_app(browser_mode="app")
+
+
+def handle_simple(_: argparse.Namespace) -> None:
+    launch_web_app(browser_mode="app", landing_path="/simple")
 
 
 def handle_export(args: argparse.Namespace) -> None:
@@ -210,6 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the FastAPI backend and open the React UI in a borderless app-mode browser window",
     )
     kiosk_parser.set_defaults(handler=handle_kiosk)
+
+    simple_parser = subparsers.add_parser(
+        "simple",
+        help="Start the FastAPI backend and open the lightweight no-framework terminal UI (same recognition pipeline)",
+    )
+    simple_parser.set_defaults(handler=handle_simple)
 
     gui_parser = subparsers.add_parser(
         "gui",

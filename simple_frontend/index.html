@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Attendance — Simple Terminal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #10151d;
+    color: #e8edf4;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 6px 0 12px; letter-spacing: 0.4px; }
+  .card {
+    width: 100%;
+    max-width: 480px;
+    background: #1a2230;
+    border: 1px solid #273043;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  label { display: block; font-size: 13px; color: #9fb0c7; margin: 8px 0 4px; }
+  input {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #33405a;
+    background: #10151d;
+    color: #e8edf4;
+    font-size: 15px;
+  }
+  button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+    border: 0;
+    border-radius: 6px;
+    background: #2f7bef;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { background: #33405a; color: #77839a; }
+  button.secondary { background: #273043; }
+  button.danger { background: #b8453f; }
+  .status {
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: #22314a;
+    font-size: 14px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+  }
+  .status.ok { background: #1d3d2a; color: #9fe2b5; }
+  .status.warn { background: #46331d; color: #f2c68b; }
+  .status.err { background: #482326; color: #f2a19b; }
+  .video-box { width: 100%; border-radius: 8px; overflow: hidden; background: #000; margin-top: 10px; }
+  .video-box img { width: 100%; display: block; min-height: 200px; object-fit: contain; }
+  .match { font-size: 15px; line-height: 1.5; margin-top: 10px; }
+  .match strong { font-size: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #273043; }
+  th { color: #9fb0c7; font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .pill.pass { background: #1d3d2a; color: #9fe2b5; }
+  .pill.fail { background: #482326; color: #f2a19b; }
+  .row { display: flex; gap: 8px; }
+  .row button { flex: 1; }
+  .hidden { display: none !important; }
+  .muted { color: #77839a; font-size: 12px; margin-top: 8px; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Attendance Terminal</h1>
+
+<!-- LOGIN -->
+<div class="card" id="loginCard">
+  <div class="status" id="loginStatus">Sign in to start.</div>
+  <label for="username">Username</label>
+  <input id="username" autocomplete="username" />
+  <label for="password">Password</label>
+  <input id="password" type="password" autocomplete="current-password" />
+  <button id="loginBtn">Sign In</button>
+</div>
+
+<!-- SCAN -->
+<div class="card hidden" id="scanCard">
+  <div class="status" id="scanStatus">Press Start to scan.</div>
+  <div class="video-box"><img id="preview" alt="Camera preview" crossorigin="anonymous" /></div>
+  <div class="row">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" class="secondary">Stop</button>
+  </div>
+  <div class="match hidden" id="matchBox">
+    <strong id="matchName"></strong><br />
+    <span id="matchMeta"></span>
+    <button id="exhaleBtn">Exhale</button>
+  </div>
+  <div class="match hidden" id="breathBox"></div>
+</div>
+
+<!-- ATTENDANCE -->
+<div class="card hidden" id="listCard">
+  <div class="row">
+    <button id="refreshBtn" class="secondary">Refresh Attendance</button>
+    <button id="logoutBtn" class="danger">Log Out</button>
+  </div>
+  <table>
+    <thead><tr><th>Name</th><th>Time</th><th>Result</th></tr></thead>
+    <tbody id="attendanceBody"><tr><td colspan="3">—</td></tr></tbody>
+  </table>
+  <div class="muted">Simple terminal — enrollment and administration are in the full app (python app.py kiosk).</div>
+</div>
+
+<canvas id="capture" class="hidden"></canvas>
+
+<script>
+"use strict";
+const CAMERA_ID = "device-front-camera";
+const SCAN_DELAY_MS = 250;
+const UNRECOGNIZED_WARNING_MS = 12000;
+const TOKEN_KEY = "attendance_operator_token";
+
+const el = (id) => document.getElementById(id);
+let token = localStorage.getItem(TOKEN_KEY) || "";
+let scanning = false;
+let scanTimer = null;
+let inFlight = false;
+let faceLocked = false;
+let unrecognizedSince = 0;
+let currentMatch = null;
+let breathSessionId = null;
+
+function setStatus(node, text, tone) {
+  node.textContent = text;
+  node.className = "status" + (tone ? " " + tone : "");
+}
+
+async function api(path, { method = "GET", body = null, json = null } = {}) {
+  const headers = { Accept: "application/json" };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  if (json) { headers["Content-Type"] = "application/json"; body = JSON.stringify(json); }
+  const response = await fetch(path, { method, headers, body, cache: "no-store" });
+  const text = await response.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch (_e) { payload = null; }
+  if (response.status === 401) { logout("Session expired. Sign in again."); throw new Error("Session expired."); }
+  if (!response.ok) {
+    throw new Error((payload && (payload.detail || payload.message)) || text || ("Request failed (" + response.status + ")"));
+  }
+  return payload;
+}
+
+// Same coaching philosophy as the full app: thresholds are the system's
+// job — the user only sees guidance, progress, or a final verdict.
+function classifyReason(reason) {
+  const text = String(reason || "").toLowerCase();
+  if (!text || text.includes("pending") || text.includes("waiting") || text.includes("more frames"))
+    return { kind: "progress", message: "Verifying identity. Hold still and look at the camera." };
+  if (text.includes("multiple faces") || text.includes("one employee"))
+    return { kind: "coach", message: "One person at a time in front of the camera." };
+  if (text.includes("too small") || text.includes("closer"))
+    return { kind: "coach", message: "Move a little closer to the camera." };
+  if (text.includes("blur") || text.includes("not stable") || text.includes("repeated"))
+    return { kind: "coach", message: "Hold still for a moment." };
+  if (text.includes("too dark") || text.includes("too bright") || text.includes("light"))
+    return { kind: "coach", message: "Adjust your position so your face is evenly lit." };
+  if (text.includes("re-enroll") || text.includes("no enrolled") || text.includes("enrolled samples"))
+    return { kind: "blocked", message: "Enrollment incomplete. Ask the administrator to re-enroll with 5 clear photos." };
+  return { kind: "unknown", message: "Verifying identity. Keep looking at the camera." };
+}
+
+function captureBlob(maxWidth, quality) {
+  return new Promise((resolve) => {
+    const img = el("preview");
+    if (!img.naturalWidth) return resolve(null);
+    let width = img.naturalWidth, height = img.naturalHeight;
+    if (width > maxWidth) { height = Math.round(height * (maxWidth / width)); width = maxWidth; }
+    const canvas = el("capture");
+    canvas.width = width; canvas.height = height;
+    canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+    canvas.toBlob((blob) => resolve(blob), "image/jpeg", quality);
+  });
+}
+
+async function login() {
+  const username = el("username").value.trim();
+  const password = el("password").value;
+  if (!username || !password) return setStatus(el("loginStatus"), "Enter username and password.", "warn");
+  el("loginBtn").disabled = true;
+  try {
+    const result = await api("/api/v2/auth/login", { method: "POST", json: { username, password } });
+    token = result.token;
+    localStorage.setItem(TOKEN_KEY, token);
+    showApp();
+  } catch (e) {
+    setStatus(el("loginStatus"), e.message, "err");
+  } finally {
+    el("loginBtn").disabled = false;
+  }
+}
+
+function logout(message) {
+  stopScan(true);
+  token = "";
+  localStorage.removeItem(TOKEN_KEY);
+  el("loginCard").classList.remove("hidden");
+  el("scanCard").classList.add("hidden");
+  el("listCard").classList.add("hidden");
+  if (message) setStatus(el("loginStatus"), message, "warn");
+}
+
+async function showApp() {
+  el("loginCard").classList.add("hidden");
+  el("scanCard").classList.remove("hidden");
+  el("listCard").classList.remove("hidden");
+  setStatus(el("scanStatus"), "Press Start to scan.");
+  void refreshAttendance();
+}
+
+async function startScan() {
+  if (scanning) return;
+  scanning = true;
+  faceLocked = false;
+  unrecognizedSince = 0;
+  currentMatch = null;
+  el("matchBox").classList.add("hidden");
+  el("breathBox").classList.add("hidden");
+  el("startBtn").disabled = true;
+  setStatus(el("scanStatus"), "Starting camera…");
+  try {
+    await api("/api/v2/local-camera/start", { method: "POST" });
+    el("preview").src = "/api/v2/local-camera/stream.mjpg?token=" + encodeURIComponent(token) + "&ts=" + Date.now();
+    setStatus(el("scanStatus"), "Camera started. Look at the screen.");
+    scheduleScan(600);
+  } catch (e) {
+    scanning = false;
+    el("startBtn").disabled = false;
+    setStatus(el("scanStatus"), e.message, "err");
+  }
+}
+
+function stopScan(silent) {
+  scanning = false;
+  faceLocked = false;
+  unrecognizedSince = 0;
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  el("preview").removeAttribute("src");
+  el("startBtn").disabled = false;
+  if (token) fetch("/api/v2/local-camera/stop", { method: "POST", headers: { Authorization: "Bearer " + token } }).catch(() => {});
+  if (!silent) setStatus(el("scanStatus"), "Scan stopped.");
+}
+
+function scheduleScan(delay) {
+  if (!scanning || currentMatch) return;
+  scanTimer = setTimeout(runScan, delay || SCAN_DELAY_MS);
+}
+
+async function runScan() {
+  if (!scanning || inFlight || currentMatch) return;
+  inFlight = true;
+  try {
+    if (!faceLocked) {
+      const blob = await captureBlob(960, 0.8);
+      if (!blob) return;
+      const form = new FormData();
+      form.append("image", blob, "detect.jpg");
+      const detection = await api("/api/v2/detections", { method: "POST", body: form });
+      const faces = detection.detected_faces || 0;
+      if (faces === 0) { unrecognizedSince = 0; setStatus(el("scanStatus"), "No face detected."); return; }
+      if (faces > 1) { unrecognizedSince = 0; setStatus(el("scanStatus"), "One person at a time in front of the camera.", "warn"); return; }
+      faceLocked = true;
+      setStatus(el("scanStatus"), "Face detected. Hold still.");
+    }
+
+    const blob = await captureBlob(960, 0.85);
+    if (!blob) return;
+    const form = new FormData();
+    form.append("camera_id", CAMERA_ID);
+    form.append("top_k", "3");
+    form.append("image", blob, "scan.jpg");
+    const result = await api("/api/v2/recognitions", { method: "POST", body: form });
+
+    if (result.matches && result.matches.length) {
+      currentMatch = result.matches[0];
+      unrecognizedSince = 0;
+      setStatus(el("scanStatus"), currentMatch.name + " identified.", "ok");
+      el("matchName").textContent = currentMatch.name;
+      el("matchMeta").textContent = "ID " + currentMatch.employee_code + " · confidence " + Number(currentMatch.score).toFixed(3);
+      el("matchBox").classList.remove("hidden");
+      return;
+    }
+
+    const faces = result.detected_faces || 0;
+    if (faces === 0) { faceLocked = false; unrecognizedSince = 0; setStatus(el("scanStatus"), "No face detected."); return; }
+    if (faces > 1) { faceLocked = false; unrecognizedSince = 0; setStatus(el("scanStatus"), "One person at a time in front of the camera.", "warn"); return; }
+
+    const reason = (result.debug_faces || []).map((f) => f.reason).find(Boolean) || "";
+    const classified = classifyReason(reason);
+    if (classified.kind === "blocked") { setStatus(el("scanStatus"), classified.message, "err"); return; }
+    const now = Date.now();
+    if (!unrecognizedSince) unrecognizedSince = now;
+    if (classified.kind === "unknown" && now - unrecognizedSince >= UNRECOGNIZED_WARNING_MS) {
+      setStatus(el("scanStatus"), "Face not recognized. Try again, or contact the administrator if you are enrolled.", "err");
+      return;
+    }
+    setStatus(el("scanStatus"), classified.message);
+  } catch (e) {
+    if (scanning) setStatus(el("scanStatus"), e.message, "err");
+  } finally {
+    inFlight = false;
+    scheduleScan();
+  }
+}
+
+async function runExhale() {
+  if (!currentMatch || breathSessionId) return;
+  el("exhaleBtn").disabled = true;
+  try {
+    const session = await api("/api/v2/breath-tests/start", {
+      method: "POST",
+      json: { worker_id: currentMatch.worker_id, camera_id: CAMERA_ID },
+    });
+    breathSessionId = session.session_id;
+    const seconds = Math.max(1, Math.ceil(Number(session.sample_seconds) || 10));
+    for (let remaining = seconds; remaining > 0; remaining -= 1) {
+      setStatus(el("scanStatus"), "Exhale now — " + remaining + "s. Keep your face in view.", "warn");
+      el("exhaleBtn").textContent = "Exhale " + remaining + "s";
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    const result = await api("/api/v2/breath-tests/complete", {
+      method: "POST",
+      json: { session_id: breathSessionId, matched_score: currentMatch.score },
+    });
+    breathSessionId = null;
+    const box = el("breathBox");
+    box.classList.remove("hidden");
+    box.innerHTML =
+      "Alcohol: " + Number(result.alcohol_ppb).toFixed(1) + " ppb " +
+      "<span class=\"pill " + (result.alcohol_clear ? "pass\">Clear" : "fail\">Fail") + "</span><br />" +
+      "Cannabis: " + Number(result.cannabis_ppb).toFixed(1) + " ppb " +
+      "<span class=\"pill " + (result.cannabis_clear ? "pass\">Clear" : "fail\">Fail") + "</span><br />" +
+      "Attendance: <span class=\"pill " + (result.attendance_marked ? "pass\">Marked" : "fail\">Not marked") + "</span>";
+    if (result.overall_clear && result.attendance_marked) {
+      setStatus(el("scanStatus"), result.name + " cleared. Attendance marked.", "ok");
+    } else if (result.overall_clear) {
+      setStatus(el("scanStatus"), result.name + " cleared, but attendance was already marked recently.", "warn");
+    } else {
+      setStatus(el("scanStatus"), result.name + " did not clear the breath check. Attendance not marked.", "err");
+    }
+    stopScan(true);
+    currentMatch = null;
+    el("matchBox").classList.add("hidden");
+    void refreshAttendance();
+  } catch (e) {
+    if (breathSessionId) {
+      fetch("/api/v2/breath-tests/" + encodeURIComponent(breathSessionId), {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + token },
+      }).catch(() => {});
+      breathSessionId = null;
+    }
+    setStatus(el("scanStatus"), e.message, "err");
+  } finally {
+    el("exhaleBtn").disabled = false;
+    el("exhaleBtn").textContent = "Exhale";
+  }
+}
+
+async function refreshAttendance() {
+  try {
+    const rows = await api("/api/v2/attendance?limit=15");
+    const body = el("attendanceBody");
+    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan=\"3\">No attendance yet.</td></tr>"; return; }
+    body.innerHTML = rows.map((row) => {
+      const time = new Date(row.created_at + (row.created_at.endsWith("Z") ? "" : "Z")).toLocaleTimeString();
+      const clear = row.alcohol_clear && row.cannabis_clear;
+      return "<tr><td>" + row.name + "</td><td>" + time + "</td><td><span class=\"pill " +
+        (clear ? "pass\">Clear" : "fail\">Fail") + "</span></td></tr>";
+    }).join("");
+  } catch (_e) { /* list refresh is best-effort */ }
+}
+
+el("loginBtn").addEventListener("click", login);
+el("password").addEventListener("keydown", (e) => { if (e.key === "Enter") login(); });
+el("startBtn").addEventListener("click", startScan);
+el("stopBtn").addEventListener("click", () => stopScan(false));
+el("exhaleBtn").addEventListener("click", runExhale);
+el("refreshBtn").addEventListener("click", refreshAttendance);
+el("logoutBtn").addEventListener("click", async () => {
+  try { await api("/api/v2/auth/logout", { method: "POST" }); } catch (_e) { /* already logging out */ }
+  logout("Signed out.");
+});
+
+if (token) {
+  api("/api/v2/auth/me").then(showApp).catch(() => {});
+}
+</script>
+</body>
+</html>

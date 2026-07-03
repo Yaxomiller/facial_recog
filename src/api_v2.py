@@ -296,6 +296,18 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+SIMPLE_FRONTEND_INDEX = BASE_DIR / "simple_frontend" / "index.html"
+
+
+@app.get("/simple", response_class=HTMLResponse, response_model=None)
+def simple_frontend() -> Response:
+    # Lightweight no-framework operator terminal. Shares the exact same
+    # backend, auth, and recognition pipeline as the React app.
+    if SIMPLE_FRONTEND_INDEX.exists():
+        return _frontend_response(SIMPLE_FRONTEND_INDEX)
+    return JSONResponse({"detail": "simple_frontend/index.html is missing."}, status_code=404)
+
+
 _LOGIN_LOCKOUT_MAX_FAILURES = int(os.getenv("ATTENDANCE_LOGIN_LOCKOUT_MAX_FAILURES", "5"))
 _LOGIN_LOCKOUT_SECONDS = int(os.getenv("ATTENDANCE_LOGIN_LOCKOUT_SECONDS", "600"))
 _login_failures: dict[str, list[float]] = {}
