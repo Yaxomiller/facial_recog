@@ -10,6 +10,36 @@ const EXHALE_FACE_CHECK_INTERVAL_MS = 3000;
 const STABLE_SINGLE_FACE_FRAMES = 1;
 const DETECTION_FRAME_MAX_WIDTH = 960;
 const RECOGNITION_FRAME_MAX_WIDTH = 960;
+const UNRECOGNIZED_WARNING_MS = 12000;
+
+// Internal threshold rejections are the system's concern, not the user's.
+// Translate them into actionable guidance and keep scanning; only report
+// "not recognized" after sustained effort fails.
+function classifyReason(reason = "") {
+  const text = String(reason).toLowerCase();
+  if (!text || text.includes("pending") || text.includes("waiting") || text.includes("more frames")) {
+    return { kind: "progress", message: "Verifying identity. Hold still and look at the camera." };
+  }
+  if (text.includes("multiple faces") || text.includes("one employee")) {
+    return { kind: "coach", message: "One person at a time. Keep only one face in front of the camera." };
+  }
+  if (text.includes("too small") || text.includes("closer")) {
+    return { kind: "coach", message: "Move a little closer to the camera." };
+  }
+  if (text.includes("blur") || text.includes("not stable") || text.includes("repeated")) {
+    return { kind: "coach", message: "Hold still for a moment while the scan completes." };
+  }
+  if (text.includes("too dark") || text.includes("too bright") || text.includes("light")) {
+    return { kind: "coach", message: "Adjust your position so your face is evenly lit." };
+  }
+  if (text.includes("re-enroll") || text.includes("no enrolled") || text.includes("enrolled samples")) {
+    return {
+      kind: "blocked",
+      message: "Enrollment is incomplete for this employee. Ask the administrator to re-enroll with 5 clear photos.",
+    };
+  }
+  return { kind: "unknown", message: "Verifying identity. Keep looking at the camera." };
+}
 
 export default function RecognitionView({ token, onUpdated, onSessionExpired = () => {} }) {
   const [message, setMessage] = useState("Press start to scan a face.");
@@ -34,6 +64,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   const breathSessionRef = useRef(null);
   const stableSingleFaceFramesRef = useRef(0);
   const lastRecognitionAttemptRef = useRef(0);
+  const unrecognizedSinceRef = useRef(0);
 
   useEffect(() => {
     exhalingRef.current = exhaling;
@@ -78,6 +109,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
   function resetScanProgress() {
     stableSingleFaceFramesRef.current = 0;
     lastRecognitionAttemptRef.current = 0;
+    unrecognizedSinceRef.current = 0;
   }
 
   async function captureFrameBlob(options) {
@@ -209,6 +241,7 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
 
         if (result.matches?.length) {
           clearScanTimer();
+          resetScanProgress();
           storeIdentifiedMatch(result.matches[0]);
           setBreathResult(null);
           clearRecognitionFailure();
@@ -226,9 +259,30 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
         }
 
         if (result.detected_faces > 0) {
-          handleRecognitionFailure(
-            firstDebugReason(result, "Face detected, but no valid employee match was confirmed."),
-          );
+          const classified = classifyReason(firstDebugReason(result, ""));
+
+          if (classified.kind === "blocked") {
+            handleRecognitionFailure(classified.message, classified.message);
+            return;
+          }
+
+          const now = Date.now();
+          if (!unrecognizedSinceRef.current) {
+            unrecognizedSinceRef.current = now;
+          }
+
+          // Keep working toward the thresholds; escalate to a visible
+          // "not recognized" verdict only after sustained failure.
+          if (classified.kind === "unknown" && now - unrecognizedSinceRef.current >= UNRECOGNIZED_WARNING_MS) {
+            handleRecognitionFailure(
+              "No enrolled employee matched this face after repeated checks.",
+              "Face not recognized. Try again, or contact the administrator if you are enrolled.",
+            );
+            return;
+          }
+
+          clearRecognitionFailure();
+          setMessage(classified.message);
           return;
         }
 
