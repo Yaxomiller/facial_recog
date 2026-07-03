@@ -67,7 +67,7 @@ def _default_framerate() -> int:
 
 
 def _default_timeout_seconds() -> float:
-    return max(0.1, _float_env("ATTENDANCE_CAMERA_TIMEOUT_SECONDS", 1.0))
+    return max(0.1, _float_env("ATTENDANCE_CAMERA_TIMEOUT_SECONDS", 6.0))
 
 
 def _default_rotate_code() -> Optional[int]:
@@ -101,17 +101,29 @@ def _load_gst():
     return Gst
 
 
-def _build_pipeline_description(device_path: str, width: int, height: int, framerate: int) -> str:
+def _build_pipeline_candidates(device_path: str, width: int, height: int, framerate: int) -> list[str]:
     configured_pipeline = os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
     if configured_pipeline:
-        return configured_pipeline
+        return [configured_pipeline]
 
-    return (
-        f"v4l2src device={device_path} ! "
-        f"video/x-raw,width={width},height={height} ! "
+    tail = (
         "videoconvert ! video/x-raw,format=BGR ! "
         "appsink name=sink emit-signals=true max-buffers=1 drop=true"
     )
+    return [
+        # en-awisp=1 en-largemode=0 enables the Allwinner ISP path on the Radxa
+        # Cubie's patched v4l2src — without it the sensor never delivers frames.
+        # The ISP outputs I420; videoconvert repacks to tight BGR for OpenCV.
+        (
+            f"v4l2src device={device_path} en-awisp=1 en-largemode=0 ! "
+            f"video/x-raw,format=I420,width={width},height={height} ! {tail}"
+        ),
+        # Plain fallback for stock v4l2src builds (no Allwinner ISP properties).
+        (
+            f"v4l2src device={device_path} ! "
+            f"video/x-raw,width={width},height={height} ! {tail}"
+        ),
+    ]
 
 
 class CameraStream:
@@ -141,12 +153,13 @@ class CameraStream:
         self.timeout_seconds = max(0.1, resolved_timeout_seconds)
         self.rotate_code = resolved_rotate_code
         self.flip_code = resolved_flip_code
-        self.pipeline_description = _build_pipeline_description(
+        self.pipeline_candidates = _build_pipeline_candidates(
             resolved_device_path,
             resolved_width,
             resolved_height,
             resolved_framerate,
         )
+        self.pipeline_description = self.pipeline_candidates[0]
         self.source_name = (
             "Configured GStreamer pipeline"
             if os.getenv("ATTENDANCE_CAMERA_PIPELINE", "").strip()
@@ -161,21 +174,46 @@ class CameraStream:
             return self
 
         gst = _load_gst()
-        try:
-            pipeline = gst.parse_launch(self.pipeline_description)
-        except Exception as exc:
-            raise RuntimeError(f"Could not create the camera pipeline for {self.source_name}.") from exc
+        last_error: Optional[Exception] = None
+        for description in self.pipeline_candidates:
+            try:
+                pipeline = gst.parse_launch(description)
+            except Exception as exc:
+                # e.g. en-awisp property missing on stock v4l2src builds —
+                # fall through to the next candidate pipeline.
+                last_error = exc
+                continue
 
-        sink = pipeline.get_by_name("sink")
-        if sink is None:
-            pipeline.set_state(gst.State.NULL)
-            raise RuntimeError("The configured camera pipeline does not expose an appsink named 'sink'.")
+            sink = pipeline.get_by_name("sink")
+            if sink is None:
+                pipeline.set_state(gst.State.NULL)
+                last_error = RuntimeError(
+                    "The configured camera pipeline does not expose an appsink named 'sink'."
+                )
+                continue
 
-        pipeline.set_state(gst.State.PLAYING)
-        self._gst = gst
-        self._pipeline = pipeline
-        self._sink = sink
-        return self
+            pipeline.set_state(gst.State.PLAYING)
+            # The Allwinner ISP takes a couple of seconds to initialise on
+            # first start. Block until the pipeline actually reaches PLAYING
+            # so the first frame pull does not time out before the sensor is
+            # streaming.
+            state_change, _current, _pending = pipeline.get_state(int(gst.SECOND * 10))
+            if state_change == gst.StateChangeReturn.FAILURE:
+                pipeline.set_state(gst.State.NULL)
+                last_error = RuntimeError(
+                    f"The camera pipeline for {self.source_name} failed to reach the PLAYING state."
+                )
+                continue
+
+            self.pipeline_description = description
+            self._gst = gst
+            self._pipeline = pipeline
+            self._sink = sink
+            return self
+
+        raise RuntimeError(
+            f"Could not create the camera pipeline for {self.source_name}."
+        ) from last_error
 
     def _pull_sample(self):
         if self._gst is None or self._sink is None:
