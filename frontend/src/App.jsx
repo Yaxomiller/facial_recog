@@ -179,6 +179,43 @@ export default function App() {
     }
   }
 
+  async function handleRequestReregisterCode(email) {
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiClient.requestReregisterCode(email);
+      setMessage(response.message);
+      return response;
+    } catch (requestError) {
+      if (requestError instanceof ApiError) {
+        setError(requestError.message);
+        throw requestError;
+      }
+      throw requestError;
+    }
+  }
+
+  async function handleReregister(username, email, password, confirmPassword, code) {
+    setError("");
+    setMessage("");
+    try {
+      const response = await apiClient.reregisterAccount(username, email, password, confirmPassword, code);
+      try {
+        const codesResponse = await apiClient.generateRecoveryCodes(response.token, password);
+        setSetupRecoveryCodes(codesResponse.codes || []);
+      } catch (_codesError) {
+        // Codes can still be generated later from the Security screen.
+      }
+      storeSession(response);
+    } catch (requestError) {
+      if (requestError instanceof ApiError) {
+        setError(requestError.message);
+        return;
+      }
+      throw requestError;
+    }
+  }
+
   function handleCredentialsChanged(nextMessage) {
     resetSessionState("");
     setMessage(nextMessage || "Password changed. Please log in with your new password.");
@@ -303,6 +340,8 @@ export default function App() {
             factoryName={FACTORY_NAME}
             onLogin={handleLogin}
             onSetup={handleSetup}
+            onReregister={handleReregister}
+            onRequestReregisterCode={handleRequestReregisterCode}
             onRequestUsernameRecovery={handleRequestUsernameRecovery}
             onVerifyUsernameRecovery={handleVerifyUsernameRecovery}
             onRequestPasswordRecovery={handleRequestPasswordRecovery}

@@ -22,14 +22,20 @@ from src.auth import (
     get_admin_email,
     get_admin_username,
     get_auth_status,
+    get_email_settings_public,
     is_admin_auth_configured,
     recover_username_by_email,
     recovery_backup_codes_remaining,
     request_password_recovery,
+    request_reregister_code,
     request_username_recovery,
+    reregister_admin,
     reset_admin_credentials,
     reset_admin_password_with_backup_code,
     reset_admin_password_with_email,
+    save_email_settings,
+    send_recovery_test_email,
+    set_admin_recovery_email,
     setup_admin_credentials,
 )
 from src.local_camera_proxy import LocalCameraProxy
@@ -114,6 +120,30 @@ class RecoveryCodeResetRequest(BaseModel):
     code: str
     new_password: str
     confirm_password: str
+
+
+class EmailSettingsRequest(BaseModel):
+    current_password: str
+    host: str
+    port: str = ""
+    username: str = ""
+    password: str = ""
+    from_email: str
+    use_tls: bool = True
+    use_ssl: bool = False
+
+
+class RecoveryEmailRequest(BaseModel):
+    current_password: str
+    email: str
+
+
+class ReregisterRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+    confirm_password: str
+    code: str
 
 
 class ResetCredentialsResponse(BaseModel):
@@ -402,6 +432,97 @@ def generate_recovery_codes(
 @app.get("/api/v2/auth/recovery-codes/status")
 def recovery_codes_status(_: SessionState = Depends(require_auth)) -> dict[str, int]:
     return {"remaining": recovery_backup_codes_remaining()}
+
+
+@app.get("/api/v2/auth/email-settings")
+def read_email_settings(_: SessionState = Depends(require_auth)) -> dict:
+    settings = get_email_settings_public()
+    settings["recovery_email"] = get_admin_email() or ""
+    return settings
+
+
+@app.put("/api/v2/auth/email-settings")
+def update_email_settings(
+    payload: EmailSettingsRequest,
+    _: SessionState = Depends(require_auth),
+) -> dict[str, str]:
+    try:
+        save_email_settings(
+            current_password=payload.current_password,
+            host=payload.host,
+            port=payload.port,
+            username=payload.username,
+            password=payload.password,
+            from_email=payload.from_email,
+            use_tls=payload.use_tls,
+            use_ssl=payload.use_ssl,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": "Email settings saved."}
+
+
+@app.post("/api/v2/auth/email-settings/test")
+def test_email_settings(_: SessionState = Depends(require_auth)) -> dict[str, str]:
+    try:
+        message = send_recovery_test_email()
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": message}
+
+
+@app.put("/api/v2/auth/recovery-email")
+def update_recovery_email(
+    payload: RecoveryEmailRequest,
+    _: SessionState = Depends(require_auth),
+) -> dict[str, str]:
+    try:
+        set_admin_recovery_email(payload.current_password, payload.email)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": "Recovery email updated."}
+
+
+@app.post("/api/v2/auth/reregister/request-code", response_model=RecoveryRequestResponse)
+def request_reregister_verification(payload: RecoveryRequest) -> RecoveryRequestResponse:
+    try:
+        message = request_reregister_code(payload.email)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RecoveryRequestResponse(ok=True, message=message)
+
+
+@app.post("/api/v2/auth/reregister", response_model=LoginResponse)
+def reregister_account(payload: ReregisterRequest) -> LoginResponse:
+    if payload.password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match.")
+
+    # Unauthenticated by design (sign-up screen); throttled like logins so
+    # verification codes cannot be brute-forced.
+    throttle_key = "__reregister__"
+    lockout_remaining = _login_lockout_remaining(throttle_key)
+    if lockout_remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many attempts. "
+                f"Try again in {max(1, (lockout_remaining + 59) // 60)} minute(s)."
+            ),
+        )
+    try:
+        reregister_admin(
+            username=payload.username,
+            password=payload.password,
+            email=payload.email,
+            code=payload.code,
+        )
+    except (RuntimeError, ValueError) as exc:
+        _record_login_failure(throttle_key)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _clear_login_failures(throttle_key)
+    session = session_store.create_session(payload.username.strip())
+    return LoginResponse(token=session.session_id, username=session.username, expires_at=session.expires_at)
 
 
 @app.post("/api/v2/auth/recovery-codes/reset-password", response_model=ResetCredentialsResponse)

@@ -186,6 +186,49 @@ export const apiClient = {
       headers: buildHeaders(token),
     });
   },
+  getEmailSettings(token) {
+    return request("/api/v2/auth/email-settings", { headers: buildHeaders(token) });
+  },
+  saveEmailSettings(token, payload) {
+    return request("/api/v2/auth/email-settings", {
+      method: "PUT",
+      headers: buildHeaders(token, { "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+  },
+  testEmailSettings(token) {
+    return request("/api/v2/auth/email-settings/test", {
+      method: "POST",
+      headers: buildHeaders(token),
+    });
+  },
+  updateRecoveryEmail(token, currentPassword, email) {
+    return request("/api/v2/auth/recovery-email", {
+      method: "PUT",
+      headers: buildHeaders(token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ current_password: currentPassword, email }),
+    });
+  },
+  requestReregisterCode(email) {
+    return request("/api/v2/auth/reregister/request-code", {
+      method: "POST",
+      headers: buildHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({ email }),
+    });
+  },
+  reregisterAccount(username, email, password, confirmPassword, code) {
+    return request("/api/v2/auth/reregister", {
+      method: "POST",
+      headers: buildHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        username,
+        email,
+        password,
+        confirm_password: confirmPassword,
+        code,
+      }),
+    });
+  },
   resetPasswordWithRecoveryCode(code, newPassword, confirmPassword) {
     return request("/api/v2/auth/recovery-codes/reset-password", {
       method: "POST",

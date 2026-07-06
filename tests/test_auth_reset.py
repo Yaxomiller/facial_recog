@@ -164,6 +164,105 @@ class ResetCredentialsTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Invalid or already-used recovery code."):
             auth.reset_admin_password_with_backup_code(first_batch[0], "NewPassword1!")
 
+    def test_email_settings_saved_in_app_enable_recovery(self) -> None:
+        auth.setup_admin_credentials(
+            username="admin.user",
+            password="OldPassword1!",
+            email="admin@example.com",
+        )
+
+        self.assertFalse(auth.email_recovery_enabled())
+
+        with self.assertRaisesRegex(RuntimeError, "Current password is incorrect."):
+            auth.save_email_settings(
+                current_password="WrongPassword1!",
+                host="smtp.gmail.com",
+                port="587",
+                username="admin@example.com",
+                password="app-password",
+                from_email="admin@example.com",
+            )
+
+        auth.save_email_settings(
+            current_password="OldPassword1!",
+            host="smtp.gmail.com",
+            port="587",
+            username="admin@example.com",
+            password="app-password",
+            from_email="admin@example.com",
+        )
+
+        self.assertTrue(auth.email_recovery_enabled())
+        public = auth.get_email_settings_public()
+        self.assertEqual(public["source"], "app")
+        self.assertEqual(public["host"], "smtp.gmail.com")
+        self.assertTrue(public["has_password"])
+
+    def test_reregister_with_recovery_code_replaces_the_account(self) -> None:
+        auth.setup_admin_credentials(
+            username="old.user",
+            password="OldPassword1!",
+            email="old@example.com",
+        )
+        codes = auth.generate_recovery_backup_codes("OldPassword1!")
+
+        auth.reregister_admin(
+            username="new.user",
+            password="NewPassword1!",
+            email="new@example.com",
+            code=codes[0],
+        )
+
+        self.assertTrue(auth.authenticate_admin("new.user", "NewPassword1!"))
+        self.assertFalse(auth.authenticate_admin("old.user", "OldPassword1!"))
+        self.assertEqual(auth.get_admin_email(), "new@example.com")
+
+    def test_reregister_with_emailed_code_replaces_the_account(self) -> None:
+        auth.setup_admin_credentials(
+            username="old.user",
+            password="OldPassword1!",
+            email="old@example.com",
+        )
+        auth.save_email_settings(
+            current_password="OldPassword1!",
+            host="smtp.example.com",
+            port="587",
+            username="",
+            password="",
+            from_email="noreply@example.com",
+        )
+
+        with patch("src.auth._generate_recovery_code", return_value="424242"), patch("src.auth._send_email"):
+            auth.request_reregister_code("old@example.com")
+
+        auth.reregister_admin(
+            username="new.user",
+            password="NewPassword1!",
+            email="new@example.com",
+            code="424242",
+        )
+
+        self.assertTrue(auth.authenticate_admin("new.user", "NewPassword1!"))
+
+    def test_reregister_without_valid_verification_is_rejected(self) -> None:
+        auth.setup_admin_credentials(
+            username="old.user",
+            password="OldPassword1!",
+            email="old@example.com",
+        )
+        auth.generate_recovery_backup_codes("OldPassword1!")
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid or expired verification code."):
+            auth.reregister_admin(
+                username="intruder",
+                password="IntruderPass1!",
+                email="intruder@example.com",
+                code="999999",
+            )
+
+        self.assertTrue(auth.authenticate_admin("old.user", "OldPassword1!"))
+        self.assertEqual(auth.get_admin_email(), "old@example.com")
+
     def test_setup_credentials_store_registered_email(self) -> None:
         auth.setup_admin_credentials(
             username="admin.user",

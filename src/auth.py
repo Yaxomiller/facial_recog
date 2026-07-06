@@ -69,7 +69,123 @@ def _truthy_env(key: str, default: bool) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _email_settings() -> Optional[EmailSettings]:
+def _get_setting(key: str) -> Optional[str]:
+    _initialize_auth_store()
+    with get_connection() as connection:
+        row = connection.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return str(row["value"]) if row is not None else None
+
+
+def _set_setting(key: str, value: str) -> None:
+    _initialize_auth_store()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO app_settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+
+
+def _delete_settings(keys: tuple[str, ...]) -> None:
+    _initialize_auth_store()
+    with get_connection() as connection:
+        connection.executemany("DELETE FROM app_settings WHERE key = ?", [(key,) for key in keys])
+
+
+_SMTP_SETTING_KEYS = (
+    "smtp_host",
+    "smtp_port",
+    "smtp_username",
+    "smtp_password",
+    "smtp_from_email",
+    "smtp_use_tls",
+    "smtp_use_ssl",
+)
+
+
+def _stored_email_settings() -> Optional[EmailSettings]:
+    host = (_get_setting("smtp_host") or "").strip()
+    from_email = (_get_setting("smtp_from_email") or "").strip()
+    if not host or not from_email:
+        return None
+
+    use_ssl = (_get_setting("smtp_use_ssl") or "false").strip().lower() in {"1", "true", "yes", "on"}
+    use_tls = (_get_setting("smtp_use_tls") or "true").strip().lower() not in {"0", "false", "no", "off"}
+    port_text = (_get_setting("smtp_port") or "").strip() or ("465" if use_ssl else "587")
+    try:
+        port = int(port_text)
+    except ValueError:
+        port = 465 if use_ssl else 587
+
+    return EmailSettings(
+        host=host,
+        port=port,
+        username=(_get_setting("smtp_username") or "").strip(),
+        password=_get_setting("smtp_password") or "",
+        from_email=from_email,
+        use_tls=use_tls,
+        use_ssl=use_ssl,
+    )
+
+
+def save_email_settings(
+    current_password: str,
+    host: str,
+    port: str,
+    username: str,
+    password: str,
+    from_email: str,
+    use_tls: bool = True,
+    use_ssl: bool = False,
+) -> None:
+    # Changing where recovery codes are delivered is account-takeover
+    # sensitive, so re-verify the password even inside a session.
+    admin_username = get_admin_username()
+    if not admin_username or not authenticate_admin(admin_username, current_password):
+        raise RuntimeError("Current password is incorrect.")
+
+    normalized_host = host.strip()
+    normalized_from = from_email.strip()
+    if not normalized_host or not normalized_from:
+        _delete_settings(_SMTP_SETTING_KEYS)
+        return
+    _normalize_email(normalized_from)
+    if port.strip():
+        try:
+            int(port.strip())
+        except ValueError as exc:
+            raise ValueError("SMTP port must be a number.") from exc
+
+    _set_setting("smtp_host", normalized_host)
+    _set_setting("smtp_port", port.strip())
+    _set_setting("smtp_username", username.strip())
+    if password:
+        _set_setting("smtp_password", password)
+    _set_setting("smtp_from_email", normalized_from)
+    _set_setting("smtp_use_tls", "true" if use_tls else "false")
+    _set_setting("smtp_use_ssl", "true" if use_ssl else "false")
+
+
+def get_email_settings_public() -> dict:
+    stored = _stored_email_settings()
+    env_settings = _env_email_settings()
+    active = stored or env_settings
+    return {
+        "configured": active is not None,
+        "source": "app" if stored else ("environment" if env_settings else "none"),
+        "host": active.host if active else "",
+        "port": str(active.port) if active else "",
+        "username": active.username if active else "",
+        "from_email": active.from_email if active else "",
+        "use_tls": active.use_tls if active else True,
+        "use_ssl": active.use_ssl if active else False,
+        "has_password": bool(active.password) if active else False,
+    }
+
+
+def _env_email_settings() -> Optional[EmailSettings]:
     host = os.getenv("ATTENDANCE_SMTP_HOST", "").strip()
     port_text = os.getenv("ATTENDANCE_SMTP_PORT", "").strip() or ("465" if _truthy_env("ATTENDANCE_SMTP_USE_SSL", False) else "587")
     from_email = os.getenv("ATTENDANCE_SMTP_FROM_EMAIL", "").strip()
@@ -90,6 +206,12 @@ def _email_settings() -> Optional[EmailSettings]:
         use_tls=_truthy_env("ATTENDANCE_SMTP_USE_TLS", True),
         use_ssl=_truthy_env("ATTENDANCE_SMTP_USE_SSL", False),
     )
+
+
+def _email_settings() -> Optional[EmailSettings]:
+    # Settings saved in the app take precedence; env vars remain a fallback
+    # for headless/scripted deployments.
+    return _stored_email_settings() or _env_email_settings()
 
 
 def _initialize_auth_store() -> None:
@@ -138,6 +260,14 @@ def _initialize_auth_store() -> None:
                 code_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 consumed_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
             """
         )
@@ -587,6 +717,79 @@ def reset_admin_password_with_backup_code(code: str, new_password: str) -> str:
 
 def recovery_backup_codes_available() -> bool:
     return recovery_backup_codes_remaining() > 0
+
+
+def set_admin_recovery_email(current_password: str, email: str) -> None:
+    admin_username = get_admin_username()
+    if not admin_username or not authenticate_admin(admin_username, current_password):
+        raise RuntimeError("Current password is incorrect.")
+    normalized_email = _normalize_email(email)
+    _initialize_auth_store()
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE admin_credentials SET email = ?, updated_at = ? WHERE id = 1",
+            (normalized_email, _utc_now_iso()),
+        )
+
+
+def send_recovery_test_email() -> str:
+    recipient = get_admin_email()
+    if not recipient:
+        raise RuntimeError("Register a recovery email first.")
+    _send_email(
+        recipient,
+        "Attendance email recovery test",
+        "Email recovery is configured correctly on your attendance device.",
+    )
+    return f"Test email sent to {recipient}."
+
+
+def request_reregister_code(email: str) -> str:
+    # Sends a verification code to the REGISTERED email so its owner can
+    # re-register the device admin account (new username/password) from the
+    # sign-up screen.
+    return _request_recovery_code(email=email, purpose="reregister")
+
+
+def reregister_admin(username: str, password: str, email: str, code: str) -> AuthStatus:
+    # Re-registering replaces the device admin account, so it demands proof
+    # of ownership: a saved recovery code OR a code emailed to the currently
+    # registered address. Without this gate, anyone at the kiosk could take
+    # over the device through the sign-up form.
+    normalized_code = code.strip()
+    if not normalized_code:
+        raise RuntimeError("Enter a recovery code or the emailed verification code.")
+
+    verified = False
+    backup_normalized = _normalize_backup_code(normalized_code)
+    if backup_normalized:
+        code_hash = _hash_recovery_code(backup_normalized)
+        _initialize_auth_store()
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT id, code_hash FROM admin_backup_codes WHERE consumed_at IS NULL"
+            ).fetchall()
+            for row in rows:
+                if hmac.compare_digest(str(row["code_hash"]), code_hash):
+                    connection.execute(
+                        "UPDATE admin_backup_codes SET consumed_at = ? WHERE id = ?",
+                        (_utc_now_iso(), int(row["id"])),
+                    )
+                    verified = True
+                    break
+
+    if not verified:
+        registered_email = get_admin_email()
+        if not registered_email:
+            raise RuntimeError(
+                "Invalid verification. Use a saved recovery code, or ask the administrator to reset from the device console."
+            )
+        _consume_recovery_code("reregister", registered_email, normalized_code)
+        verified = True
+
+    _write_local_credentials(username=username, password=password, email=_normalize_email(email))
+    get_session_store().clear_all_sessions()
+    return get_auth_status()
 
 
 def authenticate_admin(username: str, password: str) -> bool:

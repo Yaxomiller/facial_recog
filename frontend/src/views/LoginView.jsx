@@ -5,6 +5,8 @@ export default function LoginView({
   factoryName,
   onLogin,
   onSetup,
+  onReregister,
+  onRequestReregisterCode,
   onRequestUsernameRecovery,
   onVerifyUsernameRecovery,
   onRequestPasswordRecovery,
@@ -37,6 +39,11 @@ export default function LoginView({
     newPassword: "",
     confirmPassword: "",
   });
+  const [reregister, setReregister] = useState({
+    registeredEmail: "",
+    code: "",
+    codeSent: false,
+  });
 
   useEffect(() => {
     setMode(authStatus?.setup_required ? "setup" : "login");
@@ -56,7 +63,32 @@ export default function LoginView({
     event.preventDefault();
     setBusy(true);
     try {
-      await onSetup(setupUsername, setupEmail, setupPassword, setupConfirmPassword);
+      if (authStatus?.configured) {
+        await onReregister(
+          setupUsername,
+          setupEmail,
+          setupPassword,
+          setupConfirmPassword,
+          reregister.code,
+        );
+      } else {
+        await onSetup(setupUsername, setupEmail, setupPassword, setupConfirmPassword);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSendReregisterCode() {
+    if (!reregister.registeredEmail) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await onRequestReregisterCode(reregister.registeredEmail);
+      setReregister((current) => ({ ...current, codeSent: true }));
+    } catch (_requestError) {
+      // The error banner is populated by the parent handler.
     } finally {
       setBusy(false);
     }
@@ -185,8 +217,16 @@ export default function LoginView({
   }
 
   function renderSetupForm() {
+    const isReregister = Boolean(authStatus?.configured);
     return (
       <form className="form-stack" onSubmit={handleSetupSubmit}>
+        {isReregister ? (
+          <div className="alert info">
+            This device already has an account. Signing up replaces it, so you
+            must verify ownership below with an emailed code or a saved
+            recovery code.
+          </div>
+        ) : null}
         <label>
           <span>Email</span>
           <input
@@ -229,6 +269,49 @@ export default function LoginView({
             required
           />
         </label>
+
+        {isReregister ? (
+          <>
+            {authStatus?.email_recovery_enabled ? (
+              <label>
+                <span>Registered Email (to receive a code)</span>
+                <div className="input-with-action">
+                  <input
+                    type="email"
+                    value={reregister.registeredEmail}
+                    onChange={(event) =>
+                      setReregister((current) => ({ ...current, registeredEmail: event.target.value }))
+                    }
+                    placeholder="Currently registered email"
+                  />
+                  <button
+                    className="button button-secondary"
+                    onClick={handleSendReregisterCode}
+                    type="button"
+                    disabled={busy || !reregister.registeredEmail}
+                  >
+                    {reregister.codeSent ? "Resend" : "Send Code"}
+                  </button>
+                </div>
+              </label>
+            ) : (
+              <div className="alert info">
+                Email recovery is not configured, so use one of your saved
+                recovery codes as the verification code below.
+              </div>
+            )}
+
+            <label>
+              <span>Verification Code</span>
+              <input
+                value={reregister.code}
+                onChange={(event) => setReregister((current) => ({ ...current, code: event.target.value }))}
+                placeholder="Emailed code or recovery code"
+                required
+              />
+            </label>
+          </>
+        ) : null}
 
         <button className="button button-primary button-block" type="submit" disabled={busy}>
           {busy ? "Please wait..." : "Sign Up"}
@@ -457,10 +540,7 @@ export default function LoginView({
   }
 
   function showPrimaryToggle() {
-    // Sign Up only exists for first-time device setup. Once an account is
-    // configured, offering the tab is a dead end ("already configured"), so
-    // hide it entirely.
-    return (mode === "login" || mode === "setup") && authStatus?.setup_required;
+    return mode === "login" || mode === "setup";
   }
 
   function renderRecoveryAvailabilityNote() {
