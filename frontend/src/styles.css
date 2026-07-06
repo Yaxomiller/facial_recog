@@ -772,3 +772,36 @@ input:focus {
     letter-spacing: 0.08em;
   }
 }
+
+.recovery-codes-box {
+  margin-bottom: 14px;
+}
+
+.recovery-codes-list {
+  list-style: none;
+  padding: 12px;
+  margin: 0 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  background: rgba(16, 33, 61, 0.06);
+  border-radius: 10px;
+}
+
+.recovery-codes-list li {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-align: center;
+  padding: 6px 4px;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid rgba(16, 33, 61, 0.12);
+}
+
+.panel-help-text {
+  font-size: 14px;
+  color: #5d6b82;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}

@@ -6,6 +6,7 @@ import EnrollView from "./views/EnrollView";
 import RecognitionView from "./views/RecognitionView";
 import WorkersView from "./views/WorkersView";
 import AttendanceView from "./views/AttendanceView";
+import SecurityView from "./views/SecurityView";
 
 const TOKEN_KEY = "attendance_operator_token";
 const FACTORY_NAME = import.meta.env.VITE_FACTORY_NAME || "Factory Name";
@@ -31,6 +32,10 @@ const VIEW_TITLES = {
     title: "Attendance History",
     subtitle: "View breath checks and attendance records.",
   },
+  security: {
+    title: "Security",
+    subtitle: "Change the password and manage recovery codes.",
+  },
 };
 
 export default function App() {
@@ -51,6 +56,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [setupRecoveryCodes, setSetupRecoveryCodes] = useState([]);
 
   useEffect(() => {
     if (token) {
@@ -155,6 +161,14 @@ export default function App() {
     setMessage("");
     try {
       const response = await apiClient.setupCredentials(username, email, password, confirmPassword);
+      // Issue the first batch of recovery codes right away so a forgotten
+      // password never becomes a dead end on a device without email.
+      try {
+        const codesResponse = await apiClient.generateRecoveryCodes(response.token, password);
+        setSetupRecoveryCodes(codesResponse.codes || []);
+      } catch (_codesError) {
+        // Codes can still be generated later from the Security screen.
+      }
       storeSession(response);
     } catch (requestError) {
       if (requestError instanceof ApiError) {
@@ -165,23 +179,22 @@ export default function App() {
     }
   }
 
-  async function handleReset(payload) {
+  function handleCredentialsChanged(nextMessage) {
+    resetSessionState("");
+    setMessage(nextMessage || "Password changed. Please log in with your new password.");
+  }
+
+  async function handleRecoveryCodeReset(code, newPassword, confirmPassword) {
     setError("");
     setMessage("");
     try {
-      const response = await apiClient.resetCredentials(payload);
-      window.localStorage.removeItem(TOKEN_KEY);
-      setToken("");
-      setSession(null);
-      setStatus(null);
-      setWorkers([]);
-      setAttendance([]);
-      setView("overview");
+      const response = await apiClient.resetPasswordWithRecoveryCode(code, newPassword, confirmPassword);
       setMessage(response.message);
+      return response;
     } catch (requestError) {
       if (requestError instanceof ApiError) {
         setError(requestError.message);
-        return;
+        throw requestError;
       }
       throw requestError;
     }
@@ -290,17 +303,42 @@ export default function App() {
             factoryName={FACTORY_NAME}
             onLogin={handleLogin}
             onSetup={handleSetup}
-            onReset={handleReset}
             onRequestUsernameRecovery={handleRequestUsernameRecovery}
             onVerifyUsernameRecovery={handleVerifyUsernameRecovery}
             onRequestPasswordRecovery={handleRequestPasswordRecovery}
             onVerifyPasswordRecovery={handleVerifyPasswordRecovery}
+            onRecoveryCodeReset={handleRecoveryCodeReset}
             error={error}
             message={message}
           />
         ) : null}
 
-        {!loading && session ? (
+        {!loading && session && setupRecoveryCodes.length ? (
+          <div className="device-stack">
+            <section className="panel">
+              <h3>Save Your Recovery Codes</h3>
+              <p>
+                These one-time codes are the only way to reset a forgotten password
+                on this device without email. They are shown once — store them
+                somewhere safe now.
+              </p>
+              <ul className="recovery-codes-list">
+                {setupRecoveryCodes.map((code) => (
+                  <li key={code} className="mono">{code}</li>
+                ))}
+              </ul>
+              <button
+                className="button button-primary button-block"
+                onClick={() => setSetupRecoveryCodes([])}
+                type="button"
+              >
+                I saved the codes — continue
+              </button>
+            </section>
+          </div>
+        ) : null}
+
+        {!loading && session && !setupRecoveryCodes.length ? (
           <>
             <header className="device-header">
               <div className="device-header-main-row">
@@ -364,6 +402,15 @@ export default function App() {
 
             {view === "attendance" ? (
               <AttendanceView attendance={attendance} />
+            ) : null}
+
+            {view === "security" ? (
+              <SecurityView
+                token={token}
+                session={session}
+                onCredentialsChanged={handleCredentialsChanged}
+                onSessionExpired={handleSessionExpired}
+              />
             ) : null}
           </>
         ) : null}

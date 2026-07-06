@@ -18,14 +18,17 @@ from src.auth import (
     authenticate_admin,
     email_recovery_enabled,
     ensure_admin_auth_config,
+    generate_recovery_backup_codes,
     get_admin_email,
     get_admin_username,
     get_auth_status,
     is_admin_auth_configured,
     recover_username_by_email,
+    recovery_backup_codes_remaining,
     request_password_recovery,
     request_username_recovery,
     reset_admin_credentials,
+    reset_admin_password_with_backup_code,
     reset_admin_password_with_email,
     setup_admin_credentials,
 )
@@ -95,6 +98,22 @@ class AuthStatusResponse(BaseModel):
     source: str
     email_configured: bool
     email_recovery_enabled: bool
+    recovery_codes_available: bool = False
+
+
+class GenerateRecoveryCodesRequest(BaseModel):
+    current_password: str
+
+
+class RecoveryCodesResponse(BaseModel):
+    codes: list[str]
+    remaining: int
+
+
+class RecoveryCodeResetRequest(BaseModel):
+    code: str
+    new_password: str
+    confirm_password: str
 
 
 class ResetCredentialsResponse(BaseModel):
@@ -364,6 +383,55 @@ def auth_status() -> AuthStatusResponse:
         source=status.source,
         email_configured=status.email_configured,
         email_recovery_enabled=status.email_recovery_enabled,
+        recovery_codes_available=status.recovery_codes_available,
+    )
+
+
+@app.post("/api/v2/auth/recovery-codes", response_model=RecoveryCodesResponse)
+def generate_recovery_codes(
+    payload: GenerateRecoveryCodesRequest,
+    _: SessionState = Depends(require_auth),
+) -> RecoveryCodesResponse:
+    try:
+        codes = generate_recovery_backup_codes(payload.current_password)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RecoveryCodesResponse(codes=codes, remaining=len(codes))
+
+
+@app.get("/api/v2/auth/recovery-codes/status")
+def recovery_codes_status(_: SessionState = Depends(require_auth)) -> dict[str, int]:
+    return {"remaining": recovery_backup_codes_remaining()}
+
+
+@app.post("/api/v2/auth/recovery-codes/reset-password", response_model=ResetCredentialsResponse)
+def reset_password_with_recovery_code(payload: RecoveryCodeResetRequest) -> ResetCredentialsResponse:
+    if payload.new_password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match.")
+
+    # Unauthenticated by design (login screen), so throttle it exactly like
+    # failed logins to block brute-force attempts on the code space.
+    throttle_key = "__recovery_code__"
+    lockout_remaining = _login_lockout_remaining(throttle_key)
+    if lockout_remaining > 0:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many recovery attempts. "
+                f"Try again in {max(1, (lockout_remaining + 59) // 60)} minute(s)."
+            ),
+        )
+    try:
+        username = reset_admin_password_with_backup_code(payload.code, payload.new_password)
+    except (RuntimeError, ValueError) as exc:
+        _record_login_failure(throttle_key)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _clear_login_failures(throttle_key)
+    return ResetCredentialsResponse(
+        ok=True,
+        username=username,
+        message=f"Password reset successful. Log in as '{username}' with your new password.",
     )
 
 

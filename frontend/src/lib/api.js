@@ -174,6 +174,29 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
   },
+  generateRecoveryCodes(token, currentPassword) {
+    return request("/api/v2/auth/recovery-codes", {
+      method: "POST",
+      headers: buildHeaders(token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ current_password: currentPassword }),
+    });
+  },
+  recoveryCodesStatus(token) {
+    return request("/api/v2/auth/recovery-codes/status", {
+      headers: buildHeaders(token),
+    });
+  },
+  resetPasswordWithRecoveryCode(code, newPassword, confirmPassword) {
+    return request("/api/v2/auth/recovery-codes/reset-password", {
+      method: "POST",
+      headers: buildHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        code,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    });
+  },
   me(token) {
     return request("/api/v2/auth/me", { headers: buildHeaders(token) });
   },

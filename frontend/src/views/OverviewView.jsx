@@ -19,6 +19,11 @@ const TILES = [
     label: "Attendance History",
     description: "Check breath and attendance records.",
   },
+  {
+    key: "security",
+    label: "Security",
+    description: "Change password and recovery codes.",
+  },
 ];
 
 export default function OverviewView({ onJump }) {
@@ -63,6 +68,13 @@ function TileIcon({ name }) {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M7 6a2.5 2.5 0 1 1 0 5a2.5 2.5 0 0 1 0-5Zm10 0a2.5 2.5 0 1 1 0 5a2.5 2.5 0 0 1 0-5ZM7 13c2.7 0 5 1.4 5 3v2H2v-2c0-1.6 2.3-3 5-3Zm10 0c2.7 0 5 1.4 5 3v2H12v-2c0-1.6 2.3-3 5-3Z" />
+      </svg>
+    );
+  }
+  if (name === "security") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 2a5 5 0 0 1 5 5v3h1a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h1V7a5 5 0 0 1 5-5Zm0 2a3 3 0 0 0-3 3v3h6V7a3 3 0 0 0-3-3Zm0 9a2 2 0 0 0-1 3.73V19h2v-2.27A2 2 0 0 0 12 13Z" />
       </svg>
     );
   }

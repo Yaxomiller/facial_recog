@@ -114,6 +114,56 @@ class ResetCredentialsTests(unittest.TestCase):
 
         self.assertTrue(auth.authenticate_admin("admin.user", "OldPassword1!"))
 
+    def test_generating_recovery_codes_requires_the_current_password(self) -> None:
+        auth.setup_admin_credentials(username="admin.user", password="OldPassword1!")
+
+        with self.assertRaisesRegex(RuntimeError, "Current password is incorrect."):
+            auth.generate_recovery_backup_codes("WrongPassword1!")
+
+        codes = auth.generate_recovery_backup_codes("OldPassword1!")
+        self.assertEqual(len(codes), auth.BACKUP_CODE_COUNT)
+        self.assertEqual(auth.recovery_backup_codes_remaining(), auth.BACKUP_CODE_COUNT)
+        for code in codes:
+            self.assertRegex(code, r"^[0-9A-F]{4}-[0-9A-F]{4}$")
+
+    def test_recovery_code_resets_password_once_and_only_once(self) -> None:
+        auth.setup_admin_credentials(username="admin.user", password="OldPassword1!")
+        store = session_store.get_session_store()
+        original_session = store.create_session("admin.user")
+        codes = auth.generate_recovery_backup_codes("OldPassword1!")
+
+        # Codes are entered by humans: tolerate lowercase and missing hyphen.
+        username = auth.reset_admin_password_with_backup_code(
+            codes[0].lower().replace("-", ""),
+            "NewPassword1!",
+        )
+
+        self.assertEqual(username, "admin.user")
+        self.assertTrue(auth.authenticate_admin("admin.user", "NewPassword1!"))
+        self.assertFalse(auth.authenticate_admin("admin.user", "OldPassword1!"))
+        self.assertIsNone(store.get_session(original_session.session_id))
+        self.assertEqual(auth.recovery_backup_codes_remaining(), auth.BACKUP_CODE_COUNT - 1)
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid or already-used recovery code."):
+            auth.reset_admin_password_with_backup_code(codes[0], "AnotherPassword1!")
+
+    def test_invalid_recovery_code_is_rejected(self) -> None:
+        auth.setup_admin_credentials(username="admin.user", password="OldPassword1!")
+        auth.generate_recovery_backup_codes("OldPassword1!")
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid or already-used recovery code."):
+            auth.reset_admin_password_with_backup_code("0000-0000", "NewPassword1!")
+
+        self.assertTrue(auth.authenticate_admin("admin.user", "OldPassword1!"))
+
+    def test_regenerating_codes_invalidates_previous_batch(self) -> None:
+        auth.setup_admin_credentials(username="admin.user", password="OldPassword1!")
+        first_batch = auth.generate_recovery_backup_codes("OldPassword1!")
+        auth.generate_recovery_backup_codes("OldPassword1!")
+
+        with self.assertRaisesRegex(RuntimeError, "Invalid or already-used recovery code."):
+            auth.reset_admin_password_with_backup_code(first_batch[0], "NewPassword1!")
+
     def test_setup_credentials_store_registered_email(self) -> None:
         auth.setup_admin_credentials(
             username="admin.user",

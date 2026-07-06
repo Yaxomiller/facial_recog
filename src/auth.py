@@ -24,6 +24,7 @@ EMAIL_ENV_KEYS = ("ADMIN_EMAIL", "ATTENDANCE_ADMIN_EMAIL")
 MIN_PASSWORD_LENGTH = 10
 RECOVERY_CODE_LENGTH = 6
 RECOVERY_CODE_TTL_SECONDS = int(os.getenv("ATTENDANCE_RECOVERY_CODE_TTL_SECONDS", "600"))
+BACKUP_CODE_COUNT = int(os.getenv("ATTENDANCE_BACKUP_CODE_COUNT", "6"))
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9._@-]{3,64}$")
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -46,6 +47,7 @@ class AuthStatus:
     source: str
     email_configured: bool
     email_recovery_enabled: bool
+    recovery_codes_available: bool = False
 
 
 def _first_env(keys: tuple[str, ...]) -> Optional[str]:
@@ -127,6 +129,16 @@ def _initialize_auth_store() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_admin_recovery_codes_lookup
             ON admin_recovery_codes(purpose, email, expires_at)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS admin_backup_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                consumed_at TEXT
+            )
             """
         )
 
@@ -259,6 +271,7 @@ def get_auth_status() -> AuthStatus:
             source="local",
             email_configured=bool(local_credentials["email"]),
             email_recovery_enabled=email_recovery_enabled(),
+            recovery_codes_available=recovery_backup_codes_available(),
         )
 
     env_username = _env_admin_username()
@@ -501,6 +514,79 @@ def reset_admin_password_with_email(email: str, code: str, new_password: str) ->
     _write_local_credentials(username=username, password=new_password, email=normalized_email)
     get_session_store().clear_all_sessions()
     return get_auth_status()
+
+
+def _normalize_backup_code(code: str) -> str:
+    return re.sub(r"[^A-F0-9]", "", code.strip().upper())
+
+
+def _format_backup_code(raw: str) -> str:
+    return f"{raw[:4]}-{raw[4:]}"
+
+
+def generate_recovery_backup_codes(current_password: str) -> list[str]:
+    # Offline in-app recovery: one-time codes the admin saves somewhere safe.
+    # Generating a fresh batch is a sensitive action, so it requires proving
+    # the current password even inside an authenticated session, and it
+    # invalidates every previously issued code.
+    admin_username = get_admin_username()
+    if not admin_username or not authenticate_admin(admin_username, current_password):
+        raise RuntimeError("Current password is incorrect.")
+
+    raw_codes = [secrets.token_hex(4).upper() for _ in range(BACKUP_CODE_COUNT)]
+    now = _utc_now_iso()
+    _initialize_auth_store()
+    with get_connection() as connection:
+        connection.execute("DELETE FROM admin_backup_codes")
+        connection.executemany(
+            "INSERT INTO admin_backup_codes (code_hash, created_at, consumed_at) VALUES (?, ?, NULL)",
+            [(_hash_recovery_code(raw), now) for raw in raw_codes],
+        )
+    return [_format_backup_code(raw) for raw in raw_codes]
+
+
+def recovery_backup_codes_remaining() -> int:
+    _initialize_auth_store()
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS remaining FROM admin_backup_codes WHERE consumed_at IS NULL"
+        ).fetchone()
+    return int(row["remaining"]) if row else 0
+
+
+def reset_admin_password_with_backup_code(code: str, new_password: str) -> str:
+    normalized = _normalize_backup_code(code)
+    if not normalized:
+        raise RuntimeError("Recovery code is required.")
+
+    code_hash = _hash_recovery_code(normalized)
+    _initialize_auth_store()
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT id, code_hash FROM admin_backup_codes WHERE consumed_at IS NULL"
+        ).fetchall()
+        matched_id = None
+        for row in rows:
+            if hmac.compare_digest(str(row["code_hash"]), code_hash):
+                matched_id = int(row["id"])
+                break
+        if matched_id is None:
+            raise RuntimeError("Invalid or already-used recovery code.")
+        connection.execute(
+            "UPDATE admin_backup_codes SET consumed_at = ? WHERE id = ?",
+            (_utc_now_iso(), matched_id),
+        )
+
+    username = get_admin_username()
+    if not username:
+        raise RuntimeError("No admin account is configured on this device.")
+    _write_local_credentials(username=username, password=new_password)
+    get_session_store().clear_all_sessions()
+    return username
+
+
+def recovery_backup_codes_available() -> bool:
+    return recovery_backup_codes_remaining() > 0
 
 
 def authenticate_admin(username: str, password: str) -> bool:

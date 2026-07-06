@@ -1,0 +1,174 @@
+import { useEffect, useState } from "react";
+import Panel from "../components/Panel";
+import { apiClient, ApiError } from "../lib/api";
+
+export default function SecurityView({ token, session, onCredentialsChanged, onSessionExpired = () => {} }) {
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState({ tone: "", text: "" });
+  const [changeForm, setChangeForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [codesRemaining, setCodesRemaining] = useState(null);
+  const [codesPassword, setCodesPassword] = useState("");
+  const [freshCodes, setFreshCodes] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    apiClient
+      .recoveryCodesStatus(token)
+      .then((status) => {
+        if (active) {
+          setCodesRemaining(status.remaining);
+        }
+      })
+      .catch((requestError) => {
+        if (active && requestError instanceof ApiError && requestError.status === 401) {
+          onSessionExpired();
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  function showFeedback(tone, text) {
+    setFeedback({ tone, text });
+  }
+
+  async function handleChangePassword(event) {
+    event.preventDefault();
+    if (changeForm.newPassword !== changeForm.confirmPassword) {
+      showFeedback("error", "New passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await apiClient.resetCredentials({
+        username: session?.username || "",
+        current_password: changeForm.currentPassword,
+        new_password: changeForm.newPassword,
+        confirm_password: changeForm.confirmPassword,
+      });
+      onCredentialsChanged(response.message);
+    } catch (requestError) {
+      showFeedback("error", requestError instanceof Error ? requestError.message : "Password change failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGenerateCodes(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const response = await apiClient.generateRecoveryCodes(token, codesPassword);
+      setFreshCodes(response.codes);
+      setCodesRemaining(response.remaining);
+      setCodesPassword("");
+      showFeedback(
+        "success",
+        "New recovery codes generated. Save them now — they are shown only once and replace all previous codes.",
+      );
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      showFeedback("error", requestError instanceof Error ? requestError.message : "Could not generate codes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyCodes() {
+    try {
+      await navigator.clipboard.writeText(freshCodes.join("\n"));
+      showFeedback("success", "Recovery codes copied to the clipboard.");
+    } catch (_copyError) {
+      showFeedback("error", "Could not copy automatically. Write the codes down instead.");
+    }
+  }
+
+  return (
+    <div className="device-stack">
+      {feedback.text ? <div className={`alert ${feedback.tone}`}>{feedback.text}</div> : null}
+
+      <Panel eyebrow="Credentials" title="Change Password">
+        <form className="form-stack" onSubmit={handleChangePassword}>
+          <label>
+            <span>Current Password</span>
+            <input
+              type="password"
+              value={changeForm.currentPassword}
+              onChange={(event) => setChangeForm((current) => ({ ...current, currentPassword: event.target.value }))}
+              placeholder="Current password"
+              required
+            />
+          </label>
+          <label>
+            <span>New Password</span>
+            <input
+              type="password"
+              value={changeForm.newPassword}
+              onChange={(event) => setChangeForm((current) => ({ ...current, newPassword: event.target.value }))}
+              placeholder="New password"
+              required
+            />
+          </label>
+          <label>
+            <span>Confirm New Password</span>
+            <input
+              type="password"
+              value={changeForm.confirmPassword}
+              onChange={(event) => setChangeForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+              placeholder="Confirm new password"
+              required
+            />
+          </label>
+          <button className="button button-primary button-block" type="submit" disabled={busy}>
+            {busy ? "Please wait..." : "Change Password"}
+          </button>
+        </form>
+      </Panel>
+
+      <Panel eyebrow="Account Recovery" title="Recovery Codes">
+        <p className="panel-help-text">
+          Recovery codes let you reset a forgotten password from the login screen — no email needed.
+          Each code works once. Generating new codes replaces all old ones.
+          {codesRemaining !== null ? ` Codes remaining: ${codesRemaining}.` : ""}
+        </p>
+
+        {freshCodes.length ? (
+          <div className="recovery-codes-box">
+            <ul className="recovery-codes-list">
+              {freshCodes.map((code) => (
+                <li key={code} className="mono">{code}</li>
+              ))}
+            </ul>
+            <button className="button button-secondary button-block" onClick={copyCodes} type="button">
+              Copy Codes
+            </button>
+          </div>
+        ) : null}
+
+        <form className="form-stack" onSubmit={handleGenerateCodes}>
+          <label>
+            <span>Current Password</span>
+            <input
+              type="password"
+              value={codesPassword}
+              onChange={(event) => setCodesPassword(event.target.value)}
+              placeholder="Confirm your password to generate codes"
+              required
+            />
+          </label>
+          <button className="button button-primary button-block" type="submit" disabled={busy}>
+            {busy ? "Please wait..." : freshCodes.length || codesRemaining ? "Generate New Codes" : "Generate Recovery Codes"}
+          </button>
+        </form>
+      </Panel>
+    </div>
+  );
+}
