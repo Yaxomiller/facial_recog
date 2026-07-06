@@ -212,6 +212,7 @@ export default function LoginView({
   function renderForgotUsernameRequest() {
     return (
       <form className="form-stack" onSubmit={handleUsernameRecoveryRequest}>
+        {renderRecoveryAvailabilityNote()}
         <label>
           <span>Registered Email</span>
           <input
@@ -274,6 +275,7 @@ export default function LoginView({
   function renderForgotPasswordRequest() {
     return (
       <form className="form-stack" onSubmit={handlePasswordRecoveryRequest}>
+        {renderRecoveryAvailabilityNote()}
         <label>
           <span>Registered Email</span>
           <input
@@ -369,7 +371,26 @@ export default function LoginView({
   }
 
   function showPrimaryToggle() {
-    return mode === "login" || mode === "setup";
+    // Sign Up only exists for first-time device setup. Once an account is
+    // configured, offering the tab is a dead end ("already configured"), so
+    // hide it entirely.
+    return (mode === "login" || mode === "setup") && authStatus?.setup_required;
+  }
+
+  function renderRecoveryAvailabilityNote() {
+    if (authStatus?.email_recovery_enabled) {
+      return null;
+    }
+    return (
+      <div className="alert info">
+        Email recovery is not set up on this device. To recover access, run
+        {" "}
+        <code>python app.py reset-admin</code>
+        {" "}
+        from the device console (SSH), or ask your administrator to configure
+        SMTP email settings.
+      </div>
+    );
   }
 
   function renderContent() {

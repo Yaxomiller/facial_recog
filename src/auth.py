@@ -314,13 +314,30 @@ def setup_admin_credentials(username: str, password: str, email: Optional[str] =
 
 def reset_admin_credentials(
     username: str,
+    current_password: str,
     new_password: str,
 ) -> AuthStatus:
-    normalized_username = username.strip()
-    expected_username = get_admin_username()
-    if not expected_username or not hmac.compare_digest(normalized_username, expected_username):
-        raise RuntimeError("Username is incorrect.")
-    _write_local_credentials(username=normalized_username, password=new_password)
+    # Changing the password over the network requires proving knowledge of
+    # the current password. Without this check anyone on the LAN who knew
+    # the username could take over the device.
+    if not authenticate_admin(username, current_password):
+        raise RuntimeError("Current username or password is incorrect.")
+    _write_local_credentials(username=username.strip(), password=new_password)
+    get_session_store().clear_all_sessions()
+    return get_auth_status()
+
+
+def reset_admin_credentials_console(
+    username: str,
+    new_password: str,
+    email: Optional[str] = None,
+) -> AuthStatus:
+    # Offline recovery for someone with device console access (SSH/keyboard).
+    # This is the appliance equivalent of a root password reset: physical or
+    # shell access to the device is the authorization. Never expose this over
+    # the network.
+    normalized_email = _normalize_email(email) if email else None
+    _write_local_credentials(username=username, password=new_password, email=normalized_email)
     get_session_store().clear_all_sessions()
     return get_auth_status()
 

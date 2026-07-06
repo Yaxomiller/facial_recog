@@ -49,6 +49,7 @@ class ResetCredentialsTests(unittest.TestCase):
 
         auth.reset_admin_credentials(
             username="admin.user",
+            current_password="OldPassword1!",
             new_password="NewPassword1!",
         )
 
@@ -56,25 +57,62 @@ class ResetCredentialsTests(unittest.TestCase):
         self.assertTrue(auth.authenticate_admin("admin.user", "NewPassword1!"))
         self.assertEqual(auth.get_admin_username(), "admin.user")
 
-    def test_reset_credentials_validates_username_and_clears_sessions(self) -> None:
+    def test_reset_credentials_requires_the_current_password(self) -> None:
         auth.setup_admin_credentials(username="admin.user", password="OldPassword1!")
         store = session_store.get_session_store()
         original_session = store.create_session("admin.user")
 
-        with self.assertRaisesRegex(RuntimeError, "Username is incorrect."):
+        with self.assertRaisesRegex(RuntimeError, "Current username or password is incorrect."):
             auth.reset_admin_credentials(
-                username="wrong.user",
+                username="admin.user",
+                current_password="WrongPassword1!",
                 new_password="NewPassword1!",
             )
 
+        with self.assertRaisesRegex(RuntimeError, "Current username or password is incorrect."):
+            auth.reset_admin_credentials(
+                username="wrong.user",
+                current_password="OldPassword1!",
+                new_password="NewPassword1!",
+            )
+
+        self.assertTrue(auth.authenticate_admin("admin.user", "OldPassword1!"))
         self.assertIsNotNone(store.get_session(original_session.session_id))
 
         auth.reset_admin_credentials(
             username="admin.user",
+            current_password="OldPassword1!",
             new_password="NewPassword1!",
         )
 
         self.assertIsNone(store.get_session(original_session.session_id))
+
+    def test_console_reset_replaces_credentials_without_current_password(self) -> None:
+        auth.setup_admin_credentials(username="forgotten.user", password="OldPassword1!")
+        store = session_store.get_session_store()
+        original_session = store.create_session("forgotten.user")
+
+        auth.reset_admin_credentials_console(
+            username="recovered.user",
+            new_password="NewPassword1!",
+            email="recovery@example.com",
+        )
+
+        self.assertTrue(auth.authenticate_admin("recovered.user", "NewPassword1!"))
+        self.assertFalse(auth.authenticate_admin("forgotten.user", "OldPassword1!"))
+        self.assertEqual(auth.get_admin_email(), "recovery@example.com")
+        self.assertIsNone(store.get_session(original_session.session_id))
+
+    def test_console_reset_still_enforces_password_strength(self) -> None:
+        auth.setup_admin_credentials(username="admin.user", password="OldPassword1!")
+
+        with self.assertRaisesRegex(ValueError, "Password must"):
+            auth.reset_admin_credentials_console(
+                username="admin.user",
+                new_password="weak",
+            )
+
+        self.assertTrue(auth.authenticate_admin("admin.user", "OldPassword1!"))
 
     def test_setup_credentials_store_registered_email(self) -> None:
         auth.setup_admin_credentials(

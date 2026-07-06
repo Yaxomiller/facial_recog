@@ -183,6 +183,37 @@ def handle_simple(_: argparse.Namespace) -> None:
     launch_web_app(browser_mode="app", landing_path="/simple")
 
 
+def handle_reset_admin(args: argparse.Namespace) -> None:
+    # Offline recovery for a forgotten admin login. Requires console access
+    # to the device (SSH or keyboard); it never runs over the network.
+    import getpass
+
+    from src.auth import reset_admin_credentials_console
+
+    username = (args.username or "").strip() or input("New admin username: ").strip()
+    email = (args.email or "").strip() or input("Recovery email (optional, press Enter to keep current): ").strip()
+    password = args.password or ""
+    if not password:
+        while True:
+            password = getpass.getpass("New password: ")
+            confirmation = getpass.getpass("Confirm password: ")
+            if password == confirmation:
+                break
+            print("Passwords do not match. Try again.")
+
+    try:
+        reset_admin_credentials_console(
+            username=username,
+            new_password=password,
+            email=email or None,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise SystemExit(f"Reset failed: {exc}") from exc
+
+    print(f"Admin credentials reset. Log in as '{username}' with the new password.")
+    print("All existing sessions were signed out.")
+
+
 def handle_export(args: argparse.Namespace) -> None:
     if args.today:
         file_path = export_today()
@@ -231,6 +262,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the FastAPI backend and open the lightweight no-framework terminal UI (same recognition pipeline)",
     )
     simple_parser.set_defaults(handler=handle_simple)
+
+    reset_admin_parser = subparsers.add_parser(
+        "reset-admin",
+        help="Reset the admin login from the device console (offline recovery; requires shell access)",
+    )
+    reset_admin_parser.add_argument("--username", default="", help="New admin username (prompted if omitted)")
+    reset_admin_parser.add_argument("--email", default="", help="Recovery email to register (optional)")
+    reset_admin_parser.add_argument(
+        "--password",
+        default="",
+        help="New password (prompted securely if omitted; prefer the prompt so it stays out of shell history)",
+    )
+    reset_admin_parser.set_defaults(handler=handle_reset_admin)
 
     gui_parser = subparsers.add_parser(
         "gui",

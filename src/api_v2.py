@@ -144,6 +144,7 @@ class SetupCredentialsRequest(BaseModel):
 
 class ResetCredentialsRequest(BaseModel):
     username: str
+    current_password: str
     new_password: str
     confirm_password: str
 
@@ -386,6 +387,7 @@ def reset_credentials(payload: ResetCredentialsRequest) -> ResetCredentialsRespo
     try:
         reset_admin_credentials(
             username=payload.username,
+            current_password=payload.current_password,
             new_password=payload.new_password,
         )
     except (RuntimeError, ValueError) as exc:
