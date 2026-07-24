@@ -455,7 +455,10 @@ export default function App() {
         ) : null}
       </main>
 
-      <footer className="device-footer">Made by Tresenso Tech Pvt Ltd</footer>
+      <footer className="device-footer">
+        <img className="footer-logo" src="/company-logo.png" alt="Tresenso Tech logo" />
+        <span>Made by Tresenso Tech Pvt Ltd</span>
+      </footer>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Attendance — Simple Terminal</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -15,7 +15,12 @@
     flex-direction: column;
     align-items: center;
     padding: 12px;
+    touch-action: pan-x pan-y;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
+  input { -webkit-user-select: text; user-select: text; }
   h1 { font-size: 18px; font-weight: 600; margin: 6px 0 12px; letter-spacing: 0.4px; }
   .card {
     width: 100%;

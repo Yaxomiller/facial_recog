@@ -104,9 +104,21 @@ def _browser_app_command(url: str) -> Optional[list[str]]:
     if not browser_path:
         return None
 
-    command = [browser_path, f"--app={url}"]
-    if os.getenv("ATTENDANCE_APP_FULLSCREEN", "false").strip().lower() in {"1", "true", "yes", "on"}:
+    # Kiosk-friendly flags: fill the whole screen and disable pinch-zoom and
+    # swipe-back so the touchscreen UI stays put on the Radxa.
+    command = [
+        browser_path,
+        f"--app={url}",
+        "--disable-pinch",
+        "--overscroll-history-navigation=0",
+    ]
+
+    # Default to fullscreen so the app fills the entire Radxa screen. Set
+    # ATTENDANCE_APP_FULLSCREEN=false only when you deliberately want a small
+    # windowed view (e.g. on a desktop for development).
+    if os.getenv("ATTENDANCE_APP_FULLSCREEN", "true").strip().lower() in {"1", "true", "yes", "on"}:
         command.append("--start-fullscreen")
+        command.append("--start-maximized")
         return command
 
     width = os.getenv("ATTENDANCE_APP_WIDTH", "430").strip() or "430"

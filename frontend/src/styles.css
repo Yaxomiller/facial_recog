@@ -31,6 +31,19 @@ body,
 
 body {
   color: var(--navy-deep);
+  /* Kiosk touch behaviour: allow scrolling but block double-tap / pinch zoom
+     and pull-to-refresh so the screen stays fixed on the Radxa touchscreen. */
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Text entry still needs selection to work. */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button,
@@ -44,7 +57,8 @@ button {
 
 .device-shell {
   min-height: 100vh;
-  max-width: 480px;
+  width: 100%;
+  max-width: 100%;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -173,10 +187,21 @@ button {
 
 .device-footer {
   padding: 14px 16px 18px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   font-size: 0.84rem;
   font-weight: 700;
   color: rgba(16, 33, 61, 0.72);
+}
+
+.footer-logo {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .device-stack {
