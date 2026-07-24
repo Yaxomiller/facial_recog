@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "handheld",
+      "runtimeExecutable": "C:\\Users\\Aninda Mukhopadhyay\\Documents\\New project\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["C:\\Users\\Aninda Mukhopadhyay\\Documents\\Handheld\\app.py", "serve", "--port", "8801"],
+      "port": 8801
+    }
+  ]
+}

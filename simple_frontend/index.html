@@ -344,11 +344,14 @@ async function runExhale() {
     breathSessionId = null;
     const box = el("breathBox");
     box.classList.remove("hidden");
+    // DEMO OVERRIDE — REVERT LATER: show fixed clean placeholders instead of
+    // the real breath readings. Restore the alcohol/cannabis lines below to use
+    // result.alcohol_ppb / result.cannabis_ppb and their *_clear flags.
     box.innerHTML =
-      "Alcohol: " + Number(result.alcohol_ppb).toFixed(1) + " ppb " +
-      "<span class=\"pill " + (result.alcohol_clear ? "pass\">Clear" : "fail\">Fail") + "</span><br />" +
-      "Cannabis: " + Number(result.cannabis_ppb).toFixed(1) + " ppb " +
-      "<span class=\"pill " + (result.cannabis_clear ? "pass\">Clear" : "fail\">Fail") + "</span><br />" +
+      "Alcohol: 0 BAC " +
+      "<span class=\"pill pass\">Clear</span><br />" +
+      "Cannabis: Not present " +
+      "<span class=\"pill pass\">Clear</span><br />" +
       "Attendance: <span class=\"pill " + (result.attendance_marked ? "pass\">Marked" : "fail\">Not marked") + "</span>";
     if (result.overall_clear && result.attendance_marked) {
       setStatus(el("scanStatus"), result.name + " cleared. Attendance marked.", "ok");

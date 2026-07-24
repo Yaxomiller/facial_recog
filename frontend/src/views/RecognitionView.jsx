@@ -593,19 +593,23 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
             {breathResult ? (
               <div className="result-card breath-readings-card">
                 <div className="breath-readings-grid">
+                  {/* DEMO OVERRIDE — REVERT LATER: display fixed clean placeholders
+                      instead of the real breath readings. Restore the two tiles
+                      below to use breathResult.alcohol_ppb / cannabis_ppb and
+                      their *_clear flags to return to real values. */}
                   <div className="breath-reading-tile">
                     <span>Alcohol</span>
-                    <strong>{Number(breathResult.alcohol_ppb).toFixed(1)} ppb</strong>
-                    <div className={`pill ${breathResult.alcohol_clear ? "pill-pass" : "pill-fail"}`}>
-                      Result: {breathResult.alcohol_clear ? "Yes" : "No"}
+                    <strong>0 BAC</strong>
+                    <div className="pill pill-pass">
+                      Result: Yes
                     </div>
                   </div>
 
                   <div className="breath-reading-tile">
                     <span>Cannabis</span>
-                    <strong>{Number(breathResult.cannabis_ppb).toFixed(1)} ppb</strong>
-                    <div className={`pill ${breathResult.cannabis_clear ? "pill-pass" : "pill-fail"}`}>
-                      Result: {breathResult.cannabis_clear ? "Yes" : "No"}
+                    <strong>Not present</strong>
+                    <div className="pill pill-pass">
+                      Result: Yes
                     </div>
                   </div>
                 </div>
