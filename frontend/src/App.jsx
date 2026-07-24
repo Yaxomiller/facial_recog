@@ -7,6 +7,7 @@ import RecognitionView from "./views/RecognitionView";
 import WorkersView from "./views/WorkersView";
 import AttendanceView from "./views/AttendanceView";
 import SecurityView from "./views/SecurityView";
+import OnScreenKeyboard from "./components/OnScreenKeyboard";
 
 const TOKEN_KEY = "attendance_operator_token";
 const FACTORY_NAME = import.meta.env.VITE_FACTORY_NAME || "Factory Name";
@@ -459,6 +460,8 @@ export default function App() {
         <img className="footer-logo" src="/company-logo.png" alt="Tresenso Tech logo" />
         <span>Made by Tresenso Tech Pvt Ltd</span>
       </footer>
+
+      <OnScreenKeyboard />
     </div>
   );
 }

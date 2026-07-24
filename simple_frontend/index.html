@@ -82,6 +82,25 @@
   .row button { flex: 1; }
   .hidden { display: none !important; }
   .muted { color: #77839a; font-size: 12px; margin-top: 8px; text-align: center; }
+
+  .osk {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px));
+    background: rgba(8, 11, 16, 0.98);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+    user-select: none; touch-action: manipulation;
+  }
+  .osk-row { display: flex; gap: 6px; justify-content: center; }
+  .osk-key {
+    flex: 1 1 0; min-width: 0; height: 50px; border-radius: 8px; border: 0;
+    background: #2b3547; color: #f2f5fa; font-size: 17px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; touch-action: manipulation;
+  }
+  .osk-key:active { background: #3d4a63; }
+  .osk-key[data-k="space"] { flex: 4 1 0; }
+  .osk-key[data-k="shift"], .osk-key[data-k="backspace"], .osk-key[data-k="symbols"], .osk-key[data-k="abc"] { flex: 1.5 1 0; background: #1f2734; font-size: 15px; }
+  .osk-key[data-k="done"] { flex: 1.6 1 0; background: #2f7bef; color: #fff; }
 </style>
 </head>
 <body>
@@ -412,6 +431,130 @@ el("logoutBtn").addEventListener("click", async () => {
 if (token) {
   api("/api/v2/auth/me").then(showApp).catch(() => {});
 }
+
+// ---- On-screen touchscreen keyboard (for the Radxa touchscreen) ----
+(function setupKeyboard() {
+  const LAYOUTS = {
+    default: [
+      ["1","2","3","4","5","6","7","8","9","0"],
+      ["q","w","e","r","t","y","u","i","o","p"],
+      ["a","s","d","f","g","h","j","k","l"],
+      ["shift","z","x","c","v","b","n","m","backspace"],
+      ["symbols","@","space",".","done"],
+    ],
+    shift: [
+      ["1","2","3","4","5","6","7","8","9","0"],
+      ["Q","W","E","R","T","Y","U","I","O","P"],
+      ["A","S","D","F","G","H","J","K","L"],
+      ["shift","Z","X","C","V","B","N","M","backspace"],
+      ["symbols","@","space",".","done"],
+    ],
+    symbols: [
+      ["1","2","3","4","5","6","7","8","9","0"],
+      ["!","@","#","$","%","^","&","*","(",")"],
+      ["-","_","=","+","[","]","{","}",";"],
+      [":","'","\"",",",".","/","?","backspace"],
+      ["abc","space","done"],
+    ],
+  };
+  const LABELS = { shift: "⇧", backspace: "⌫", space: "space", done: "Done", symbols: "?123", abc: "ABC" };
+  const IGNORED = new Set(["checkbox","radio","button","submit","reset","file","range","color","date","time"]);
+
+  let activeInput = null;
+  let layout = "default";
+  let hideTimer = null;
+  const kb = document.createElement("div");
+  kb.className = "osk hidden";
+  document.body.appendChild(kb);
+
+  function isTypeable(elm) {
+    if (!elm) return false;
+    if (elm.tagName === "TEXTAREA") return true;
+    if (elm.tagName !== "INPUT") return false;
+    return !IGNORED.has((elm.getAttribute("type") || "text").toLowerCase());
+  }
+
+  function render() {
+    kb.innerHTML = "";
+    (LAYOUTS[layout] || LAYOUTS.default).forEach((row) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "osk-row";
+      row.forEach((key) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "osk-key";
+        btn.dataset.k = key;
+        btn.textContent = LABELS[key] || key;
+        btn.addEventListener("pointerdown", (e) => e.preventDefault());
+        btn.addEventListener("mousedown", (e) => e.preventDefault());
+        btn.addEventListener("click", () => pressKey(key));
+        rowEl.appendChild(btn);
+      });
+      kb.appendChild(rowEl);
+    });
+  }
+
+  function typeInto(text) {
+    const input = activeInput;
+    if (!input) return;
+    let start, end;
+    try { start = input.selectionStart; end = input.selectionEnd; } catch (_e) { start = null; end = null; }
+    if (start == null || end == null) { input.value += text; }
+    else {
+      input.value = input.value.slice(0, start) + text + input.value.slice(end);
+      try { const c = start + text.length; input.setSelectionRange(c, c); } catch (_e2) {}
+    }
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function backspace() {
+    const input = activeInput;
+    if (!input) return;
+    let start, end;
+    try { start = input.selectionStart; end = input.selectionEnd; } catch (_e) { start = null; end = null; }
+    if (start == null || end == null) { input.value = input.value.slice(0, -1); }
+    else if (start === end) {
+      if (start === 0) return;
+      input.value = input.value.slice(0, start - 1) + input.value.slice(end);
+      try { input.setSelectionRange(start - 1, start - 1); } catch (_e2) {}
+    } else {
+      input.value = input.value.slice(0, start) + input.value.slice(end);
+      try { input.setSelectionRange(start, start); } catch (_e3) {}
+    }
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function pressKey(key) {
+    if (!activeInput) return;
+    if (key === "shift") { layout = layout === "shift" ? "default" : "shift"; render(); return; }
+    if (key === "symbols") { layout = "symbols"; render(); return; }
+    if (key === "abc") { layout = "default"; render(); return; }
+    if (key === "backspace") { backspace(); return; }
+    if (key === "space") { typeInto(" "); return; }
+    if (key === "done") { hide(); activeInput.blur(); activeInput = null; return; }
+    typeInto(key);
+    if (layout === "shift") { layout = "default"; render(); }
+  }
+
+  function show() { kb.classList.remove("hidden"); }
+  function hide() { kb.classList.add("hidden"); }
+
+  document.addEventListener("focusin", (e) => {
+    if (isTypeable(e.target)) {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      activeInput = e.target;
+      layout = "default";
+      render();
+      show();
+      setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_e) {} }, 60);
+    }
+  });
+  document.addEventListener("focusout", () => {
+    hideTimer = setTimeout(() => {
+      if (!isTypeable(document.activeElement)) { hide(); activeInput = null; }
+    }, 200);
+  });
+})();
 </script>
 </body>
 </html>
