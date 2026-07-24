@@ -188,73 +188,33 @@ class RecognitionGateTests(unittest.TestCase):
         self.assertFalse(accepted)
         self.assertIn("Re-enroll", reason)
 
-    def test_strict_confirmation_mode_requires_more_consistent_frames(self) -> None:
+    def test_confirm_match_candidate_accepts_on_the_first_frame(self) -> None:
         service = object.__new__(ScalableAttendanceService)
-        service.worker_profiles = {
-            1: WorkerProfile(
-                centroid=np.asarray([1.0, 0.0, 0.0], dtype=np.float32),
-                min_similarity=0.9,
-                mean_similarity=0.94,
-                sample_count=5,
-            )
-        }
-        service.pending_matches = {}
 
         confirmed, score, reason = service._confirm_match_candidate(
             camera_id="cam-1",
             worker_id=1,
             score=0.89,
-            strict_mode=True,
         )
-        self.assertFalse(confirmed)
-        self.assertIsNone(reason)
 
-        for _index in range(3):
-            confirmed, score, reason = service._confirm_match_candidate(
-                camera_id="cam-1",
-                worker_id=1,
-                score=0.89,
-                strict_mode=True,
-            )
-            self.assertFalse(confirmed)
-            self.assertIsNone(reason)
-
-        confirmed, score, reason = service._confirm_match_candidate(
-            camera_id="cam-1",
-            worker_id=1,
-            score=0.89,
-            strict_mode=True,
-        )
         self.assertTrue(confirmed)
         self.assertIsNone(reason)
-        self.assertGreaterEqual(score, 0.89)
+        self.assertEqual(score, 0.89)
 
-    def test_strict_confirmation_mode_rejects_weak_repeated_scores(self) -> None:
+    def test_confirm_match_candidate_does_not_require_repeated_frames(self) -> None:
         service = object.__new__(ScalableAttendanceService)
-        service.worker_profiles = {
-            1: WorkerProfile(
-                centroid=np.asarray([1.0, 0.0, 0.0], dtype=np.float32),
-                min_similarity=0.9,
-                mean_similarity=0.94,
-                sample_count=5,
-            )
-        }
-        service.pending_matches = {}
 
-        scores = [0.88, 0.87, 0.86, 0.85, 0.80]
-        result = (False, 0.0, None)
-        for value in scores:
-            result = service._confirm_match_candidate(
-                camera_id="cam-1",
-                worker_id=1,
-                score=value,
-                strict_mode=True,
-            )
+        # A single low-but-already-gated score is accepted immediately;
+        # there is no multi-frame consistency requirement to satisfy.
+        confirmed, score, reason = service._confirm_match_candidate(
+            camera_id="cam-1",
+            worker_id=1,
+            score=0.61,
+        )
 
-        confirmed, score, reason = result
-        self.assertFalse(confirmed)
-        self.assertIsNotNone(reason)
-        self.assertIn("repeated face checks", reason)
+        self.assertTrue(confirmed)
+        self.assertIsNone(reason)
+        self.assertEqual(score, 0.61)
 
     def test_multiple_face_result_requires_one_person_in_frame(self) -> None:
         service = object.__new__(ScalableAttendanceService)

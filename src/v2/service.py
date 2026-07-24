@@ -1,7 +1,7 @@
 from collections import defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from threading import Lock
 from typing import Any, Optional
 from uuid import uuid4
@@ -17,25 +17,16 @@ from src.v2.config import (
     AMBIGUITY_MARGIN,
     DEFAULT_LIST_LIMIT,
     FACE_SIZE,
-    FAST_ACCEPT_SCORE,
     LBPH_CONFIDENCE_THRESHOLD,
-    MATCH_CONFIRMATION_MIN_AVG_SCORE,
-    MATCH_CONFIRMATION_MIN_BEST_SCORE,
     MAX_PROFILE_CENTROID_THRESHOLD,
     MIN_ENROLLMENT_IMAGES,
     MATCH_THRESHOLD,
-    MATCH_CONFIRMATION_FRAMES,
-    MATCH_CONFIRMATION_WINDOW_SECONDS,
     OPEN_SET_CENTROID_MARGIN,
     DESCRIPTOR_VARIANT_REQUIRED_HITS,
     OPEN_SET_MIN_CENTROID_SCORE,
     OPEN_SET_MIN_SCORE,
     OPEN_SET_SUPPORT_SCORE,
     SINGLE_PROFILE_LBPH_CONFIDENCE_THRESHOLD,
-    SINGLE_PROFILE_CONFIRMATION_FRAMES,
-    SINGLE_PROFILE_CONFIRMATION_MIN_AVG_SCORE,
-    SINGLE_PROFILE_CONFIRMATION_MIN_BEST_SCORE,
-    SINGLE_PROFILE_CONFIRMATION_MIN_FLOOR_SCORE,
     SINGLE_PROFILE_MIN_CENTROID_SCORE,
     SINGLE_PROFILE_MIN_SCORE,
     SINGLE_PROFILE_REQUIRED_SUPPORT_HITS,
@@ -69,16 +60,6 @@ from src.v2.schemas import (
     WorkerRead,
 )
 from src.v2.vision import align_face_by_eyes, detect_faces, detector_backend_name, expand_face_box
-
-
-@dataclass
-class PendingMatch:
-    worker_id: int
-    count: int
-    best_score: float
-    total_score: float
-    min_score: float
-    expires_at: datetime
 
 
 @dataclass
@@ -128,7 +109,6 @@ class ScalableAttendanceService:
         self.lbph_recognizer: Optional[cv2.face_LBPHFaceRecognizer] = None
         self.lbph_label_to_worker_id: dict[int, int] = {}
         self.worker_profiles: dict[int, WorkerProfile] = {}
-        self.pending_matches: dict[str, PendingMatch] = {}
         self._initialize_recognition_state()
 
     def _initialize_recognition_state(self) -> None:
@@ -169,88 +149,17 @@ class ScalableAttendanceService:
             dimension=self.embedder.vector_size,
         )
 
-    def _purge_pending_matches(self) -> None:
-        now = datetime.utcnow()
-        expired = [camera_id for camera_id, state in self.pending_matches.items() if state.expires_at <= now]
-        for camera_id in expired:
-            del self.pending_matches[camera_id]
-
     def _confirm_match_candidate(
         self,
         camera_id: str,
         worker_id: int,
         score: float,
-        strict_mode: bool = False,
     ) -> tuple[bool, float, Optional[str]]:
-        self._purge_pending_matches()
-        now = datetime.utcnow()
-        state = self.pending_matches.get(camera_id)
-        expires_at = now + timedelta(seconds=MATCH_CONFIRMATION_WINDOW_SECONDS)
-        required_frames = MATCH_CONFIRMATION_FRAMES
-        min_average_score = MATCH_CONFIRMATION_MIN_AVG_SCORE
-        min_best_score = MATCH_CONFIRMATION_MIN_BEST_SCORE
-        min_floor_score = MATCH_CONFIRMATION_MIN_AVG_SCORE
-        if strict_mode:
-            required_frames = max(required_frames, SINGLE_PROFILE_CONFIRMATION_FRAMES)
-            min_average_score = max(min_average_score, SINGLE_PROFILE_CONFIRMATION_MIN_AVG_SCORE)
-            min_best_score = max(min_best_score, SINGLE_PROFILE_CONFIRMATION_MIN_BEST_SCORE)
-            min_floor_score = max(min_floor_score, SINGLE_PROFILE_CONFIRMATION_MIN_FLOOR_SCORE)
-
-        if state is None or state.worker_id != worker_id or state.expires_at <= now:
-            self.pending_matches[camera_id] = PendingMatch(
-                worker_id=worker_id,
-                count=1,
-                best_score=score,
-                total_score=score,
-                min_score=score,
-                expires_at=expires_at,
-            )
-            return False, score, None
-
-        state.count += 1
-        state.best_score = max(state.best_score, score)
-        state.total_score += score
-        state.min_score = min(state.min_score, score)
-        state.expires_at = expires_at
-        self.pending_matches[camera_id] = state
-
-        # Fast accept: near-perfect score, but never on a single frame. At
-        # least two consecutive sightings of the same identity with a strong
-        # running average are required, so one fluke frame can never mark
-        # attendance by itself.
-        if (
-            not strict_mode
-            and score >= FAST_ACCEPT_SCORE
-            and state.count >= 2
-            and (state.total_score / state.count) >= min_best_score
-        ):
-            del self.pending_matches[camera_id]
-            return True, score, None
-
-        if state.count < required_frames:
-            return False, state.best_score, None
-
-        average_score = state.total_score / max(1, state.count)
-        confirmation_score = max(state.best_score, average_score)
-        del self.pending_matches[camera_id]
-        if (
-            average_score < min_average_score
-            or state.best_score < min_best_score
-            or state.min_score < min_floor_score
-        ):
-            return (
-                False,
-                confirmation_score,
-                (
-                    "Rejected: repeated face checks were not strong enough for a safe confirmation "
-                    f"(avg {average_score:.3f}, best {state.best_score:.3f})."
-                ),
-            )
-
-        return True, confirmation_score, None
-
-    def _strict_confirmation_mode(self) -> bool:
-        return len(self.worker_profiles) <= 1
+        # A candidate reaching this point has already passed the open-set
+        # gate, ambiguity margin, and LBPH/descriptor agreement checks for
+        # this single frame, so it is accepted immediately rather than
+        # waiting for repeated confirmation across multiple frames.
+        return True, score, None
 
     def _multiple_face_result(self, faces: list[tuple[int, int, int, int]]) -> RecognitionResult:
         return RecognitionResult(
@@ -1110,7 +1019,6 @@ class ScalableAttendanceService:
                 camera_id=camera_id,
                 worker_id=best_worker_id,
                 score=confidence_score,
-                strict_mode=self._strict_confirmation_mode(),
             )
             if not confirmed:
                 unknown_faces += 1
@@ -1304,7 +1212,6 @@ class ScalableAttendanceService:
                 camera_id=camera_id,
                 worker_id=best_worker_id,
                 score=accepted_score,
-                strict_mode=self._strict_confirmation_mode(),
             )
             if not confirmed:
                 unknown_faces += 1

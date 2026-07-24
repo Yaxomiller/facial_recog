@@ -259,8 +259,6 @@ def _prepare_benchmark_environment(name: str) -> Path:
     benchmark_dir.mkdir(parents=True, exist_ok=True)
     os.environ["ATTENDANCE_DB_FILE"] = str(benchmark_dir / "benchmark.db")
     os.environ["ATTENDANCE_VECTOR_INDEX_FILE"] = str(benchmark_dir / "benchmark_index.npz")
-    os.environ["ATTENDANCE_MATCH_CONFIRMATION_FRAMES"] = "1"
-    os.environ["ATTENDANCE_MATCH_CONFIRMATION_WINDOW_SECONDS"] = "1"
     os.environ["ATTENDANCE_RECOGNITION_CACHE_TTL_SECONDS"] = "0"
     return benchmark_dir
 

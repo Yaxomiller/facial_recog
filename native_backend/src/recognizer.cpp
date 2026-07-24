@@ -56,15 +56,6 @@ struct SqliteConnection {
     sqlite3* handle = nullptr;
 };
 
-struct PendingMatch {
-    int worker_id = 0;
-    int count = 0;
-    double best_score = 0.0;
-    double total_score = 0.0;
-    double min_score = 0.0;
-    std::chrono::steady_clock::time_point expires_at;
-};
-
 struct WorkerRecord {
     int worker_id = 0;
     std::string employee_code;
@@ -98,9 +89,6 @@ struct DescriptorConsensus {
     std::vector<CandidateDebug> candidates;
     std::optional<std::string> rejection_reason;
 };
-
-std::mutex g_pending_mutex;
-std::unordered_map<std::string, PendingMatch> g_pending_matches;
 
 int int_env(const char* key, int default_value) {
     const char* raw = std::getenv(key);
@@ -1104,81 +1092,20 @@ double calibrated_match_confidence(
     return std::max(0.0, std::min(0.99, 0.64 + (0.34 * blended)));
 }
 
-void purge_pending_matches_locked(const std::chrono::steady_clock::time_point& now) {
-    for (auto iter = g_pending_matches.begin(); iter != g_pending_matches.end();) {
-        if (iter->second.expires_at <= now) {
-            iter = g_pending_matches.erase(iter);
-        } else {
-            ++iter;
-        }
-    }
-}
-
 std::tuple<bool, double, std::optional<std::string>> confirm_match_candidate(
     const std::string& camera_id,
     int worker_id,
     double score,
     bool strict_mode
 ) {
-    const double fast_accept_score = double_env("ATTENDANCE_FAST_ACCEPT_SCORE", 0.94);
-    if (!strict_mode && score >= fast_accept_score) {
-        std::lock_guard<std::mutex> lock(g_pending_mutex);
-        g_pending_matches.erase(camera_id);
-        return {true, score, std::nullopt};
-    }
-
-    const auto now = std::chrono::steady_clock::now();
-    const auto window_seconds = std::chrono::seconds(int_env("ATTENDANCE_MATCH_CONFIRMATION_WINDOW_SECONDS", 2));
-    int required_frames = int_env("ATTENDANCE_MATCH_CONFIRMATION_FRAMES", 4);
-    double min_average_score = double_env("ATTENDANCE_MATCH_CONFIRMATION_MIN_AVG_SCORE", 0.76);
-    double min_best_score = double_env("ATTENDANCE_MATCH_CONFIRMATION_MIN_BEST_SCORE", 0.78);
-    double min_floor_score = min_average_score;
-
-    if (strict_mode) {
-        required_frames = std::max(required_frames, int_env("ATTENDANCE_SINGLE_PROFILE_CONFIRMATION_FRAMES", 5));
-        min_average_score = std::max(min_average_score, double_env("ATTENDANCE_SINGLE_PROFILE_CONFIRMATION_MIN_AVG_SCORE", 0.86));
-        min_best_score = std::max(min_best_score, double_env("ATTENDANCE_SINGLE_PROFILE_CONFIRMATION_MIN_BEST_SCORE", 0.88));
-        min_floor_score = std::max(min_floor_score, double_env("ATTENDANCE_SINGLE_PROFILE_CONFIRMATION_MIN_FLOOR_SCORE", 0.82));
-    }
-
-    std::lock_guard<std::mutex> lock(g_pending_mutex);
-    purge_pending_matches_locked(now);
-    PendingMatch& state = g_pending_matches[camera_id];
-    if (state.count == 0 || state.worker_id != worker_id || state.expires_at <= now) {
-        state = PendingMatch{
-            worker_id,
-            1,
-            score,
-            score,
-            score,
-            now + window_seconds,
-        };
-        return {false, score, std::nullopt};
-    }
-
-    state.count += 1;
-    state.best_score = std::max(state.best_score, score);
-    state.total_score += score;
-    state.min_score = std::min(state.min_score, score);
-    state.expires_at = now + window_seconds;
-
-    if (state.count < required_frames) {
-        return {false, state.best_score, std::nullopt};
-    }
-
-    const double average_score = state.total_score / static_cast<double>(std::max(1, state.count));
-    const double confirmation_score = std::max(state.best_score, average_score);
-    g_pending_matches.erase(camera_id);
-    if (average_score < min_average_score || state.best_score < min_best_score || state.min_score < min_floor_score) {
-        return {
-            false,
-            confirmation_score,
-            "Rejected: repeated face checks were not strong enough for a safe confirmation "
-            "(avg " + std::string(cv::format("%.3f", average_score)) +
-            ", best " + std::string(cv::format("%.3f", state.best_score)) + ").",
-        };
-    }
-    return {true, confirmation_score, std::nullopt};
+    // A candidate reaching this point has already passed the open-set gate,
+    // ambiguity margin, and LBPH/descriptor agreement checks for this single
+    // frame, so it is accepted immediately rather than waiting for repeated
+    // confirmation across multiple frames.
+    (void)camera_id;
+    (void)worker_id;
+    (void)strict_mode;
+    return {true, score, std::nullopt};
 }
 
 RecognitionResult multiple_face_result(const std::vector<DetectionBox>& faces) {
