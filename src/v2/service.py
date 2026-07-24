@@ -21,7 +21,6 @@ from src.v2.config import (
     LBPH_CONFIDENCE_THRESHOLD,
     MATCH_CONFIRMATION_MIN_AVG_SCORE,
     MATCH_CONFIRMATION_MIN_BEST_SCORE,
-    MAX_FACE_BRIGHTNESS,
     MAX_PROFILE_CENTROID_THRESHOLD,
     MIN_ENROLLMENT_IMAGES,
     MATCH_THRESHOLD,
@@ -42,7 +41,6 @@ from src.v2.config import (
     SINGLE_PROFILE_REQUIRED_SUPPORT_HITS,
     SINGLE_PROFILE_SUPPORT_SCORE,
     MIN_FACE_BLUR_VARIANCE,
-    MIN_FACE_BRIGHTNESS,
     MIN_FACE_HEIGHT,
     MIN_FACE_WIDTH,
     MAX_FACES_PER_REQUEST,
@@ -844,7 +842,6 @@ class ScalableAttendanceService:
                     face_width=w,
                     face_height=h,
                     blur_variance=blur_variance,
-                    brightness=brightness,
                 ).removeprefix("Rejected: ").rstrip(".").lower()
                 + "."
             )
@@ -1051,7 +1048,6 @@ class ScalableAttendanceService:
                             face_width=w,
                             face_height=h,
                             blur_variance=blur_variance,
-                            brightness=brightness,
                         ),
                         blur_variance=blur_variance,
                         brightness=brightness,
@@ -1206,7 +1202,6 @@ class ScalableAttendanceService:
                             face_width=w,
                             face_height=h,
                             blur_variance=blur_variance,
-                            brightness=brightness,
                         ),
                         blur_variance=blur_variance,
                         brightness=brightness,
@@ -1375,8 +1370,8 @@ class ScalableAttendanceService:
             blur_variance, brightness = self._face_quality_metrics(face_crop)
         if blur_variance < MIN_FACE_BLUR_VARIANCE:
             return False
-        if brightness < MIN_FACE_BRIGHTNESS or brightness > MAX_FACE_BRIGHTNESS:
-            return False
+        # Brightness is intentionally not gated here: dark or bright frames
+        # are accepted as-is rather than rejected.
         return True
 
     def _face_rejection_reason(
@@ -1384,7 +1379,6 @@ class ScalableAttendanceService:
         face_width: int,
         face_height: int,
         blur_variance: float,
-        brightness: float,
     ) -> str:
         reasons: list[str] = []
         if face_width < MIN_FACE_WIDTH or face_height < MIN_FACE_HEIGHT:
@@ -1394,14 +1388,6 @@ class ScalableAttendanceService:
         if blur_variance < MIN_FACE_BLUR_VARIANCE:
             reasons.append(
                 f"face is too blurry ({blur_variance:.1f} < {MIN_FACE_BLUR_VARIANCE:.1f})"
-            )
-        if brightness < MIN_FACE_BRIGHTNESS:
-            reasons.append(
-                f"frame is too dark ({brightness:.1f} < {MIN_FACE_BRIGHTNESS:.1f})"
-            )
-        elif brightness > MAX_FACE_BRIGHTNESS:
-            reasons.append(
-                f"frame is too bright ({brightness:.1f} > {MAX_FACE_BRIGHTNESS:.1f})"
             )
         if not reasons:
             return "Rejected by the face quality gate."

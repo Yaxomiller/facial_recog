@@ -854,14 +854,11 @@ bool is_face_usable(
     const int min_face_width = int_env("ATTENDANCE_MIN_FACE_WIDTH", 90);
     const int min_face_height = int_env("ATTENDANCE_MIN_FACE_HEIGHT", 90);
     const double min_blur_variance = double_env("ATTENDANCE_MIN_FACE_BLUR_VARIANCE", 30.0);
-    const double min_brightness = double_env("ATTENDANCE_MIN_FACE_BRIGHTNESS", 35.0);
-    const double max_brightness = double_env("ATTENDANCE_MAX_FACE_BRIGHTNESS", 220.0);
+    (void)brightness; // Brightness is intentionally not gated: dark or bright frames are accepted as-is.
 
     return face_width >= min_face_width &&
            face_height >= min_face_height &&
-           blur_variance >= min_blur_variance &&
-           brightness >= min_brightness &&
-           brightness <= max_brightness;
+           blur_variance >= min_blur_variance;
 }
 
 std::string face_rejection_reason(
@@ -873,8 +870,7 @@ std::string face_rejection_reason(
     const int min_face_width = int_env("ATTENDANCE_MIN_FACE_WIDTH", 90);
     const int min_face_height = int_env("ATTENDANCE_MIN_FACE_HEIGHT", 90);
     const double min_blur_variance = double_env("ATTENDANCE_MIN_FACE_BLUR_VARIANCE", 30.0);
-    const double min_brightness = double_env("ATTENDANCE_MIN_FACE_BRIGHTNESS", 35.0);
-    const double max_brightness = double_env("ATTENDANCE_MAX_FACE_BRIGHTNESS", 220.0);
+    (void)brightness; // Brightness is intentionally not gated: dark or bright frames are accepted as-is.
 
     std::vector<std::string> reasons;
     if (face_width < min_face_width || face_height < min_face_height) {
@@ -886,15 +882,6 @@ std::string face_rejection_reason(
     if (blur_variance < min_blur_variance) {
         reasons.push_back(
             "face is too blurry (" + cv::format("%.1f", blur_variance) + " < " + cv::format("%.1f", min_blur_variance) + ")"
-        );
-    }
-    if (brightness < min_brightness) {
-        reasons.push_back(
-            "frame is too dark (" + cv::format("%.1f", brightness) + " < " + cv::format("%.1f", min_brightness) + ")"
-        );
-    } else if (brightness > max_brightness) {
-        reasons.push_back(
-            "frame is too bright (" + cv::format("%.1f", brightness) + " > " + cv::format("%.1f", max_brightness) + ")"
         );
     }
     if (reasons.empty()) {
