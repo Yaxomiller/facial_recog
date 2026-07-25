@@ -76,6 +76,8 @@ class BreathTestResult(BaseModel):
     name: str
     matched_score: float
     raw_sensor_value: Optional[float] = None
+    # alcohol_ppb / cannabis_ppb carry the mV*s integrals of the delta above
+    # the fresh-air baseline (field names kept for compatibility).
     alcohol_ppb: float
     cannabis_ppb: float
     alcohol_clear: bool
@@ -83,14 +85,27 @@ class BreathTestResult(BaseModel):
     overall_clear: bool
     attendance_marked: bool
     created_at: datetime
+    # Cannabis conformity score: upper/lower area split of the exhale curve.
+    cannabis_ratio: float = 0.0
+    cannabis_upper: float = 0.0
+    cannabis_lower: float = 0.0
+    # AD5941 in uA, AD7798 in mV.
+    alcohol_baseline: float = 0.0
+    alcohol_peak: float = 0.0
+    cannabis_baseline: float = 0.0
+    cannabis_peak: float = 0.0
 
 
 class BreathTestSessionStartResult(BaseModel):
     session_id: str
     worker_id: int
     camera_id: str
-    sample_seconds: float
+    sample_seconds: float          # the blow window
     started_at: datetime
+    # Purge + baseline run on the sensor board BEFORE the subject blows; the
+    # UI must wait this long before prompting for the exhale.
+    blow_delay_seconds: float = 0.0
+    cycle_seconds: float = 0.0     # total wall time of the measurement cycle
 
 
 class BreathTestSessionCancelResult(BaseModel):
@@ -112,6 +127,9 @@ class AttendanceRow(BaseModel):
     cannabis_clear: bool
     attendance_marked: bool
     created_at: datetime
+    cannabis_ratio: float = 0.0
+    cannabis_upper: float = 0.0
+    cannabis_lower: float = 0.0
 
 
 class DeleteAttendanceResult(BaseModel):

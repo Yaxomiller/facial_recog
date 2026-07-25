@@ -97,6 +97,21 @@ def _ensure_attendance_columns(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE attendance_events ADD COLUMN cannabis_clear INTEGER NOT NULL DEFAULT 1")
     if "attendance_marked" not in existing_columns:
         connection.execute("ALTER TABLE attendance_events ADD COLUMN attendance_marked INTEGER NOT NULL DEFAULT 1")
+    # Breath electronics detail (ported from the handheld analyzer):
+    # cannabis conformity score plus the per-channel baseline/peak values.
+    for column in (
+        "cannabis_ratio",
+        "cannabis_upper",
+        "cannabis_lower",
+        "alcohol_baseline",
+        "alcohol_peak",
+        "cannabis_baseline",
+        "cannabis_peak",
+    ):
+        if column not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE attendance_events ADD COLUMN {column} REAL NOT NULL DEFAULT 0"
+            )
 
 
 def upsert_worker(employee_code: str, name: str) -> sqlite3.Row:
@@ -327,6 +342,13 @@ def record_screening_event(
     alcohol_clear: bool,
     cannabis_clear: bool,
     raw_sensor_value: Optional[float] = None,
+    cannabis_ratio: float = 0.0,
+    cannabis_upper: float = 0.0,
+    cannabis_lower: float = 0.0,
+    alcohol_baseline: float = 0.0,
+    alcohol_peak: float = 0.0,
+    cannabis_baseline: float = 0.0,
+    cannabis_peak: float = 0.0,
 ) -> sqlite3.Row:
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=ATTENDANCE_COOLDOWN_HOURS)).isoformat(timespec="seconds")
@@ -360,9 +382,16 @@ def record_screening_event(
                 alcohol_clear,
                 cannabis_clear,
                 attendance_marked,
-                created_at
+                created_at,
+                cannabis_ratio,
+                cannabis_upper,
+                cannabis_lower,
+                alcohol_baseline,
+                alcohol_peak,
+                cannabis_baseline,
+                cannabis_peak
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 worker_id,
@@ -375,6 +404,13 @@ def record_screening_event(
                 int(cannabis_clear),
                 int(attendance_marked),
                 created_at,
+                float(cannabis_ratio),
+                float(cannabis_upper),
+                float(cannabis_lower),
+                float(alcohol_baseline),
+                float(alcohol_peak),
+                float(cannabis_baseline),
+                float(cannabis_peak),
             ),
         )
         row = connection.execute(
@@ -395,7 +431,11 @@ def list_attendance(limit: int = 100) -> list[sqlite3.Row]:
                    attendance_events.raw_sensor_value,
                    attendance_events.alcohol_ppb, attendance_events.cannabis_ppb,
                    attendance_events.alcohol_clear, attendance_events.cannabis_clear,
-                   attendance_events.attendance_marked, attendance_events.created_at
+                   attendance_events.attendance_marked, attendance_events.created_at,
+                   attendance_events.cannabis_ratio, attendance_events.cannabis_upper,
+                   attendance_events.cannabis_lower,
+                   attendance_events.alcohol_baseline, attendance_events.alcohol_peak,
+                   attendance_events.cannabis_baseline, attendance_events.cannabis_peak
             FROM attendance_events
             JOIN workers ON workers.id = attendance_events.worker_id
             ORDER BY attendance_events.created_at DESC

@@ -62,6 +62,16 @@ from src.v2.schemas import (
 from src.v2.vision import align_face_by_eyes, detect_faces, detector_backend_name, expand_face_box
 
 
+def _event_float(event: Any, column: str) -> float:
+    """Read an optional numeric column from a sqlite3.Row. Rows created before
+    the breath-detail migration simply do not carry these columns."""
+    try:
+        value = event[column]
+    except (IndexError, KeyError):
+        return 0.0
+    return 0.0 if value is None else float(value)
+
+
 @dataclass
 class WorkerProfile:
     centroid: np.ndarray
@@ -80,6 +90,9 @@ class PendingBreathSession:
     future: Future
     canceled: bool = False
     completed: bool = False
+    # Total measurement wall time (purge + baseline + blow). The reading is
+    # only ready after this long, so it drives the completion timeout.
+    cycle_seconds: float = 0.0
 
 
 @dataclass
@@ -801,6 +814,13 @@ class ScalableAttendanceService:
             overall_clear=bool(event["alcohol_clear"]) and bool(event["cannabis_clear"]),
             attendance_marked=bool(event["attendance_marked"]),
             created_at=event["created_at"],
+            cannabis_ratio=_event_float(event, "cannabis_ratio"),
+            cannabis_upper=_event_float(event, "cannabis_upper"),
+            cannabis_lower=_event_float(event, "cannabis_lower"),
+            alcohol_baseline=_event_float(event, "alcohol_baseline"),
+            alcohol_peak=_event_float(event, "alcohol_peak"),
+            cannabis_baseline=_event_float(event, "cannabis_baseline"),
+            cannabis_peak=_event_float(event, "cannabis_peak"),
         )
 
     def start_breath_test(self, worker_id: int, camera_id: str) -> BreathTestSessionStartResult:
@@ -821,6 +841,8 @@ class ScalableAttendanceService:
                 worker_id=worker_id,
                 camera_id=camera_id,
             )
+            blow_delay_seconds = max(0.0, float(getattr(self.breath_analyzer, "blow_delay_seconds", 0.0)))
+            cycle_seconds = max(0.0, float(getattr(self.breath_analyzer, "cycle_seconds", 0.0)))
             session = PendingBreathSession(
                 session_id=session_id,
                 worker_id=worker_id,
@@ -828,6 +850,7 @@ class ScalableAttendanceService:
                 started_at=started_at,
                 sample_seconds=max(0.0, float(getattr(self.breath_analyzer, "sample_seconds", 0.0))),
                 future=future,
+                cycle_seconds=cycle_seconds,
             )
             self.breath_sessions[session_id] = session
 
@@ -837,6 +860,8 @@ class ScalableAttendanceService:
             camera_id=camera_id,
             sample_seconds=max(1.0, session.sample_seconds),
             started_at=started_at,
+            blow_delay_seconds=blow_delay_seconds,
+            cycle_seconds=cycle_seconds,
         )
 
     def complete_breath_test(self, session_id: str, matched_score: float) -> BreathTestResult:
@@ -852,7 +877,11 @@ class ScalableAttendanceService:
             raise RuntimeError(f"No worker found for id '{session.worker_id}'.")
 
         try:
-            reading = session.future.result(timeout=max(5.0, session.sample_seconds + 5.0))
+            # Wait for the whole measurement cycle, not just the blow window:
+            # purge + baseline run on the sensor board first, so timing out on
+            # sample_seconds alone would discard a perfectly good reading.
+            wait_seconds = max(session.cycle_seconds, session.sample_seconds) + 10.0
+            reading = session.future.result(timeout=max(5.0, wait_seconds))
         except FutureTimeoutError as exc:
             raise RuntimeError("The breath sensor is still processing this exhale. Please wait a moment and try again.") from exc
         except Exception as exc:
@@ -870,6 +899,13 @@ class ScalableAttendanceService:
             cannabis_ppb=reading.cannabis_ppb,
             alcohol_clear=reading.alcohol_clear,
             cannabis_clear=reading.cannabis_clear,
+            cannabis_ratio=getattr(reading, "cannabis_ratio", 0.0),
+            cannabis_upper=getattr(reading, "cannabis_upper", 0.0),
+            cannabis_lower=getattr(reading, "cannabis_lower", 0.0),
+            alcohol_baseline=getattr(reading, "alcohol_baseline", 0.0),
+            alcohol_peak=getattr(reading, "alcohol_peak", 0.0),
+            cannabis_baseline=getattr(reading, "cannabis_baseline", 0.0),
+            cannabis_peak=getattr(reading, "cannabis_peak", 0.0),
         )
         with self.breath_session_lock:
             session.completed = True
@@ -904,6 +940,13 @@ class ScalableAttendanceService:
             cannabis_ppb=reading.cannabis_ppb,
             alcohol_clear=reading.alcohol_clear,
             cannabis_clear=reading.cannabis_clear,
+            cannabis_ratio=getattr(reading, "cannabis_ratio", 0.0),
+            cannabis_upper=getattr(reading, "cannabis_upper", 0.0),
+            cannabis_lower=getattr(reading, "cannabis_lower", 0.0),
+            alcohol_baseline=getattr(reading, "alcohol_baseline", 0.0),
+            alcohol_peak=getattr(reading, "alcohol_peak", 0.0),
+            cannabis_baseline=getattr(reading, "cannabis_baseline", 0.0),
+            cannabis_peak=getattr(reading, "cannabis_peak", 0.0),
         )
         return self._breath_test_result_from_event(worker=worker, matched_score=matched_score, event=event)
 

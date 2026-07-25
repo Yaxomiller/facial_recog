@@ -179,6 +179,11 @@
         <div class="pill" id="canPill">—</div>
       </div>
     </div>
+    <div class="reading" id="conformityBox" style="margin-top:10px;">
+      <span>Cannabis Conformity (U/L)</span>
+      <strong id="confVal">—</strong>
+      <div class="muted" id="confDetail" style="margin-top:0;">&nbsp;</div>
+    </div>
     <div style="margin-top:10px;text-align:center;">
       Attendance: <span class="pill" id="attPill">—</span>
     </div>
@@ -221,8 +226,8 @@
   <div class="card">
     <div class="status" id="histStatus">Recent attendance records.</div>
     <table>
-      <thead><tr><th>Name</th><th>Time</th><th>Alcohol</th><th>Cannabis</th><th>Att.</th></tr></thead>
-      <tbody id="histBody"><tr><td colspan="5">Loading…</td></tr></tbody>
+      <thead><tr><th>Name</th><th>Time</th><th>Alcohol</th><th>Cannabis</th><th>U/L</th><th>Att.</th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="6">Loading…</td></tr></tbody>
     </table>
     <button class="block sec" id="histRefreshBtn">Refresh</button>
   </div>
@@ -233,11 +238,10 @@
 <script>
 "use strict";
 
-// DEMO OVERRIDE — REVERT LATER: when true the breath readings always display
-// clean placeholders ("0 BAC" / "Not present") regardless of sensor values,
-// matching the kiosk app's current demo behaviour. Set to false to show the
-// real measured values.
-const DEMO_PLACEHOLDER_READINGS = true;
+// When true the breath readings always display clean placeholders
+// ("0 BAC" / "Not present") regardless of sensor values. Set to true for a
+// scripted demo; false shows the real values measured by the sensor board.
+const DEMO_PLACEHOLDER_READINGS = false;
 
 const CAMERA_ID = "demo-front-camera";
 const SCAN_DELAY_MS = 300;
@@ -420,6 +424,17 @@ async function runExhale() {
       json: { worker_id: currentMatch.worker_id, camera_id: CAMERA_ID },
     });
     breathSessionId = session.session_id;
+
+    // The sensor board runs PURGE (pump on, sensors warming) and BASELINE
+    // (fresh-air zero) before the blow window opens. Prompting for the exhale
+    // during those phases would measure air, not breath.
+    const prep = Math.max(0, Math.round(Number(session.blow_delay_seconds) || 0));
+    for (let r = prep; r > 0; r--) {
+      setStatus(el("scanStatus"), "Preparing sensor — " + r + "s. Do not blow yet.", "warn");
+      el("exhaleBtn").textContent = "Wait " + r + "s";
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+
     const secs = Math.max(1, Math.ceil(Number(session.sample_seconds) || 10));
     for (let r = secs; r > 0; r--) {
       setStatus(el("scanStatus"), "Exhale now — " + r + "s. Keep your face in view.", "warn");
@@ -448,12 +463,28 @@ async function runExhale() {
 function showBreathResult(result) {
   const alcClear = DEMO_PLACEHOLDER_READINGS ? true : result.alcohol_clear;
   const canClear = DEMO_PLACEHOLDER_READINGS ? true : result.cannabis_clear;
-  el("alcVal").textContent = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(result.alcohol_ppb).toFixed(1) + " ppb";
-  el("canVal").textContent = DEMO_PLACEHOLDER_READINGS ? "Not present" : Number(result.cannabis_ppb).toFixed(1) + " ppb";
+  // Readings are trapezoidal integrals of the delta above the fresh-air
+  // baseline, in mV*s (the field names still say *_ppb for compatibility).
+  el("alcVal").textContent = DEMO_PLACEHOLDER_READINGS
+    ? "0 BAC" : Number(result.alcohol_ppb).toFixed(3) + " mV·s";
+  el("canVal").textContent = DEMO_PLACEHOLDER_READINGS
+    ? "Not present" : Number(result.cannabis_ppb).toFixed(3) + " mV·s";
   el("alcPill").textContent = alcClear ? "Clear" : "Fail";
   el("alcPill").className = "pill " + (alcClear ? "pass" : "fail");
   el("canPill").textContent = canClear ? "Clear" : "Fail";
   el("canPill").className = "pill " + (canClear ? "pass" : "fail");
+
+  // Cannabis conformity score: upper/lower area split of the exhale curve.
+  if (DEMO_PLACEHOLDER_READINGS) {
+    el("confVal").textContent = "—";
+    el("confDetail").textContent = " ";
+  } else {
+    el("confVal").textContent = (Number(result.cannabis_ratio) || 0).toFixed(3);
+    el("confDetail").textContent =
+      "upper " + (Number(result.cannabis_upper) || 0).toFixed(3) +
+      " / lower " + (Number(result.cannabis_lower) || 0).toFixed(3) + " mV·s";
+  }
+
   el("attPill").textContent = result.attendance_marked ? "Marked" : "Not Marked";
   el("attPill").className = "pill " + (result.attendance_marked ? "pass" : "fail");
   el("matchCard").classList.add("hidden");
@@ -586,14 +617,16 @@ async function loadHistory() {
   try {
     const rows = await api("/api/v2/attendance?limit=50");
     const body = el("histBody");
-    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='5'>No attendance records yet.</td></tr>"; return; }
+    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='6'>No attendance records yet.</td></tr>"; return; }
     body.innerHTML = rows.map((r) => {
       const iso = r.created_at + (String(r.created_at).endsWith("Z") ? "" : "Z");
       const when = new Date(iso).toLocaleString();
-      const alc = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(r.alcohol_ppb).toFixed(1);
-      const can = DEMO_PLACEHOLDER_READINGS ? "None" : Number(r.cannabis_ppb).toFixed(1);
+      const alc = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(r.alcohol_ppb).toFixed(2);
+      const can = DEMO_PLACEHOLDER_READINGS ? "None" : Number(r.cannabis_ppb).toFixed(2);
+      const ratio = DEMO_PLACEHOLDER_READINGS ? "—" : (Number(r.cannabis_ratio) || 0).toFixed(2);
       const att = r.attendance_marked;
       return "<tr><td>" + r.name + "</td><td>" + when + "</td><td>" + alc + "</td><td>" + can +
+             "</td><td>" + ratio +
              "</td><td><span class='pill " + (att ? "pass'>Yes" : "fail'>No") + "</span></td></tr>";
     }).join("");
     setStatus(el("histStatus"), rows.length + " record(s).");

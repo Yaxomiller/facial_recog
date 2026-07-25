@@ -456,22 +456,39 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
 
     breathSessionRef.current = breathSession.session_id;
     const breathSeconds = Math.max(1, Math.ceil(Number(breathSession.sample_seconds) || EXHALE_SECONDS));
+    // The sensor board runs PURGE (pump on, sensors warming) and BASELINE
+    // (fresh-air zero) before the blow window opens. Prompting for the exhale
+    // during those phases would measure room air, not breath.
+    const prepSeconds = Math.max(0, Math.round(Number(breathSession.blow_delay_seconds) || 0));
     exhaleCancelledRef.current = false;
     setBreathResult(null);
     setExhaleState(true);
-    setCountdown(breathSeconds);
+    setCountdown(prepSeconds > 0 ? prepSeconds : breathSeconds);
     clearRecognitionFailure();
-    setMessage("Exhale now. Keep your face in view until the timer finishes.");
+    setMessage(
+      prepSeconds > 0
+        ? "Preparing the sensor. Do not blow yet — wait for the exhale prompt."
+        : "Exhale now. Keep your face in view until the timer finishes.",
+    );
 
     exhaleCheckTimerRef.current = window.setInterval(() => {
       void verifyExhaleIdentity(identifiedMatchRef.current || matchToVerify);
     }, EXHALE_FACE_CHECK_INTERVAL_MS);
 
-    let remaining = breathSeconds;
+    let preparing = prepSeconds > 0;
+    let remaining = preparing ? prepSeconds : breathSeconds;
     exhaleTimerRef.current = window.setInterval(async () => {
       remaining -= 1;
       if (remaining > 0) {
         setCountdown(remaining);
+        return;
+      }
+      if (preparing) {
+        // Purge/baseline finished — now prompt for the actual exhale.
+        preparing = false;
+        remaining = breathSeconds;
+        setCountdown(breathSeconds);
+        setMessage("Exhale now. Keep your face in view until the timer finishes.");
         return;
       }
 
@@ -593,24 +610,33 @@ export default function RecognitionView({ token, onUpdated, onSessionExpired = (
             {breathResult ? (
               <div className="result-card breath-readings-card">
                 <div className="breath-readings-grid">
-                  {/* DEMO OVERRIDE — REVERT LATER: display fixed clean placeholders
-                      instead of the real breath readings. Restore the two tiles
-                      below to use breathResult.alcohol_ppb / cannabis_ppb and
-                      their *_clear flags to return to real values. */}
+                  {/* Readings are trapezoidal integrals of the delta above the
+                      fresh-air baseline, in mV*s (field names still say *_ppb
+                      for schema compatibility). */}
                   <div className="breath-reading-tile">
                     <span>Alcohol</span>
-                    <strong>0 BAC</strong>
-                    <div className="pill pill-pass">
-                      Result: Yes
+                    <strong>{Number(breathResult.alcohol_ppb).toFixed(3)} mV·s</strong>
+                    <div className={`pill ${breathResult.alcohol_clear ? "pill-pass" : "pill-fail"}`}>
+                      Result: {breathResult.alcohol_clear ? "Yes" : "No"}
                     </div>
                   </div>
 
                   <div className="breath-reading-tile">
                     <span>Cannabis</span>
-                    <strong>Not present</strong>
-                    <div className="pill pill-pass">
-                      Result: Yes
+                    <strong>{Number(breathResult.cannabis_ppb).toFixed(3)} mV·s</strong>
+                    <div className={`pill ${breathResult.cannabis_clear ? "pill-pass" : "pill-fail"}`}>
+                      Result: {breathResult.cannabis_clear ? "Yes" : "No"}
                     </div>
+                  </div>
+                </div>
+
+                <div className="breath-reading-tile">
+                  <span>Cannabis Conformity (U/L)</span>
+                  <strong>{(Number(breathResult.cannabis_ratio) || 0).toFixed(3)}</strong>
+                  <div className="mono">
+                    upper {(Number(breathResult.cannabis_upper) || 0).toFixed(3)}
+                    {" / lower "}
+                    {(Number(breathResult.cannabis_lower) || 0).toFixed(3)} mV·s
                   </div>
                 </div>
 

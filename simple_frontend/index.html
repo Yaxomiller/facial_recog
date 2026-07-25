@@ -355,6 +355,15 @@ async function runExhale() {
       json: { worker_id: currentMatch.worker_id, camera_id: CAMERA_ID },
     });
     breathSessionId = session.session_id;
+
+    // The sensor board runs PURGE and BASELINE before the blow window opens.
+    const prep = Math.max(0, Math.round(Number(session.blow_delay_seconds) || 0));
+    for (let remaining = prep; remaining > 0; remaining -= 1) {
+      setStatus(el("scanStatus"), "Preparing sensor — " + remaining + "s. Do not blow yet.", "warn");
+      el("exhaleBtn").textContent = "Wait " + remaining + "s";
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
     const seconds = Math.max(1, Math.ceil(Number(session.sample_seconds) || 10));
     for (let remaining = seconds; remaining > 0; remaining -= 1) {
       setStatus(el("scanStatus"), "Exhale now — " + remaining + "s. Keep your face in view.", "warn");
@@ -368,14 +377,14 @@ async function runExhale() {
     breathSessionId = null;
     const box = el("breathBox");
     box.classList.remove("hidden");
-    // DEMO OVERRIDE — REVERT LATER: show fixed clean placeholders instead of
-    // the real breath readings. Restore the alcohol/cannabis lines below to use
-    // result.alcohol_ppb / result.cannabis_ppb and their *_clear flags.
+    // Readings are trapezoidal integrals of the delta above the fresh-air
+    // baseline, in mV*s; cannabis also carries the U/L conformity score.
     box.innerHTML =
-      "Alcohol: 0 BAC " +
-      "<span class=\"pill pass\">Clear</span><br />" +
-      "Cannabis: Not present " +
-      "<span class=\"pill pass\">Clear</span><br />" +
+      "Alcohol: " + Number(result.alcohol_ppb).toFixed(3) + " mV·s " +
+      "<span class=\"pill " + (result.alcohol_clear ? "pass\">Clear" : "fail\">Fail") + "</span><br />" +
+      "Cannabis: " + Number(result.cannabis_ppb).toFixed(3) + " mV·s " +
+      "<span class=\"pill " + (result.cannabis_clear ? "pass\">Clear" : "fail\">Fail") + "</span><br />" +
+      "Conformity (U/L): " + (Number(result.cannabis_ratio) || 0).toFixed(3) + "<br />" +
       "Attendance: <span class=\"pill " + (result.attendance_marked ? "pass\">Marked" : "fail\">Not marked") + "</span>";
     if (result.overall_clear && result.attendance_marked) {
       setStatus(el("scanStatus"), result.name + " cleared. Attendance marked.", "ok");
