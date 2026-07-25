@@ -56,6 +56,7 @@ def launch_default_app() -> None:
         "  python app.py native  - Native Linux desktop app (Tauri shell, must be pre-built)\n"
         "  python app.py kiosk   - React web app in a borderless app-mode browser window\n"
         "  python app.py simple  - Lightweight terminal UI (same recognition, minimal browser load)\n"
+        "  python app.py demo    - No-login demo UI for low-memory devices (authentication disabled)\n"
         "\n"
         "Other commands: enroll, train, recognize, export\n"
         "Run `python app.py --help` for full usage.\n"
@@ -195,6 +196,16 @@ def handle_simple(_: argparse.Namespace) -> None:
     launch_web_app(browser_mode="app", landing_path="/simple")
 
 
+def handle_demo(_: argparse.Namespace) -> None:
+    # DEMO BUILD: no login, minimal UI, for low-memory devices. Enabling
+    # ATTENDANCE_DEMO_MODE makes every API endpoint reachable without
+    # authentication, so this must never be used on a networked or
+    # production device.
+    os.environ["ATTENDANCE_DEMO_MODE"] = "1"
+    print("\n*** DEMO MODE: authentication is DISABLED for this run. ***\n")
+    launch_web_app(browser_mode="app", landing_path="/demo")
+
+
 def handle_reset_admin(args: argparse.Namespace) -> None:
     # Offline recovery for a forgotten admin login. Requires console access
     # to the device (SSH or keyboard); it never runs over the network.
@@ -274,6 +285,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start the FastAPI backend and open the lightweight no-framework terminal UI (same recognition pipeline)",
     )
     simple_parser.set_defaults(handler=handle_simple)
+
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="Start the no-login demo UI (minimal, low-memory; authentication disabled)",
+    )
+    demo_parser.set_defaults(handler=handle_demo)
 
     reset_admin_parser = subparsers.add_parser(
         "reset-admin",

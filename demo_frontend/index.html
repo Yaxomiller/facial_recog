@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Attendance Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #0f141c;
+    color: #e9eef6;
+    min-height: 100vh;
+    padding: 10px 10px 14px;
+    touch-action: pan-x pan-y;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input { -webkit-user-select: text; user-select: text; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 10px;
+  }
+  header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.3px; }
+  .demo-tag {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #0f141c; background: #f3aa2c;
+    padding: 3px 7px; border-radius: 999px;
+  }
+
+  .card {
+    background: #18202c; border: 1px solid #26303f; border-radius: 10px;
+    padding: 12px; margin-bottom: 10px;
+  }
+
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tile {
+    background: #18202c; border: 1px solid #26303f; border-radius: 12px;
+    padding: 20px 12px; color: #e9eef6; text-align: center; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .tile:active { background: #212c3b; }
+  .tile svg { width: 30px; height: 30px; fill: #f3aa2c; }
+  .tile strong { font-size: 15px; }
+  .tile span { font-size: 11px; color: #90a0b8; line-height: 1.3; }
+
+  label { display: block; font-size: 12px; color: #9fb0c7; margin: 8px 0 4px; }
+  input {
+    width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #33405a;
+    background: #0f141c; color: #e9eef6; font-size: 15px;
+  }
+  button {
+    padding: 12px; border: 0; border-radius: 7px; background: #2f7bef;
+    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { background: #2c3646; color: #6d7a90; }
+  button.sec { background: #26303f; }
+  button.danger { background: #a83c37; }
+  button.block { width: 100%; margin-top: 10px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row button { flex: 1; }
+
+  .status {
+    padding: 10px; border-radius: 7px; background: #223049;
+    font-size: 13px; line-height: 1.4; min-height: 40px;
+    display: flex; align-items: center;
+  }
+  .status.ok { background: #17402a; color: #9fe2b5; }
+  .status.warn { background: #45351c; color: #f2c68b; }
+  .status.err { background: #45222a; color: #f2a19b; }
+
+  .video { width: 100%; background: #000; border-radius: 8px; overflow: hidden; margin-top: 10px; }
+  .video img { width: 100%; display: block; min-height: 180px; object-fit: contain; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 7px 4px; border-bottom: 1px solid #26303f; }
+  th { color: #9fb0c7; font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .pill.pass { background: #17402a; color: #9fe2b5; }
+  .pill.fail { background: #45222a; color: #f2a19b; }
+
+  .readings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .reading {
+    background: #0f141c; border: 1px solid #26303f; border-radius: 9px;
+    padding: 12px; text-align: center;
+  }
+  .reading span { font-size: 11px; color: #90a0b8; text-transform: uppercase; letter-spacing: 0.06em; }
+  .reading strong { display: block; font-size: 19px; margin: 6px 0 8px; }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #33405a; }
+  .hidden { display: none !important; }
+  .muted { color: #7f8da3; font-size: 11px; margin-top: 8px; }
+
+  /* On-screen keyboard */
+  .osk {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 7px 5px calc(7px + env(safe-area-inset-bottom, 0px));
+    background: rgba(8, 11, 16, 0.98);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+  }
+  .osk-row { display: flex; gap: 5px; justify-content: center; }
+  .osk-key {
+    flex: 1 1 0; min-width: 0; height: 46px; border-radius: 7px;
+    background: #2b3547; color: #f2f5fa; font-size: 16px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation;
+  }
+  .osk-key:active { background: #3d4a63; }
+  .osk-key[data-k="space"] { flex: 4 1 0; }
+  .osk-key[data-k="shift"], .osk-key[data-k="backspace"],
+  .osk-key[data-k="symbols"], .osk-key[data-k="abc"] { flex: 1.5 1 0; background: #1f2734; font-size: 14px; }
+  .osk-key[data-k="done"] { flex: 1.6 1 0; background: #2f7bef; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="viewTitle">Attendance</h1>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span class="demo-tag">Demo</span>
+    <button class="sec hidden" id="homeBtn" style="padding:7px 12px;font-size:13px;">Home</button>
+  </div>
+</header>
+
+<!-- HOME -->
+<div id="viewHome">
+  <div class="tiles">
+    <button class="tile" data-go="enroll">
+      <svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 1 0 6a3 3 0 0 1 0-6Zm0 8c3.3 0 6 1.8 6 4v2H6v-2c0-2.2 2.7-4 6-4Zm7-8v3h3v2h-3v3h-2v-3h-3V8h3V5h2Z"/></svg>
+      <strong>New User</strong><span>Add employee &amp; photos</span>
+    </button>
+    <button class="tile" data-go="scan">
+      <svg viewBox="0 0 24 24"><path d="M7 3H5a2 2 0 0 0-2 2v2h2V5h2V3Zm12 0h-2v2h2v2h2V5a2 2 0 0 0-2-2ZM5 17H3v2a2 2 0 0 0 2 2h2v-2H5v-2Zm16 0h-2v2h-2v2h2a2 2 0 0 0 2-2v-2ZM12 8a4 4 0 1 1 0 8a4 4 0 0 1 0-8Zm0 2a2 2 0 1 0 0 4a2 2 0 0 0 0-4Z"/></svg>
+      <strong>Scan</strong><span>Face scan &amp; breath test</span>
+    </button>
+    <button class="tile" data-go="database">
+      <svg viewBox="0 0 24 24"><path d="M7 6a2.5 2.5 0 1 1 0 5a2.5 2.5 0 0 1 0-5Zm10 0a2.5 2.5 0 1 1 0 5a2.5 2.5 0 0 1 0-5ZM7 13c2.7 0 5 1.4 5 3v2H2v-2c0-1.6 2.3-3 5-3Zm10 0c2.7 0 5 1.4 5 3v2H12v-2c0-1.6 2.3-3 5-3Z"/></svg>
+      <strong>Database</strong><span>Registered employees</span>
+    </button>
+    <button class="tile" data-go="history">
+      <svg viewBox="0 0 24 24"><path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm1 4v2h8V8H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>
+      <strong>Attendance History</strong><span>Breath &amp; attendance records</span>
+    </button>
+  </div>
+  <div class="muted" id="homeStats">&nbsp;</div>
+</div>
+
+<!-- SCAN -->
+<div id="viewScan" class="hidden">
+  <div class="card">
+    <div class="status" id="scanStatus">Press Start to scan.</div>
+    <div class="video"><img id="preview" alt="Camera preview" crossorigin="anonymous" /></div>
+    <div class="row">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" class="sec">Stop</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="matchCard">
+    <strong id="matchName" style="font-size:17px;"></strong>
+    <div class="muted" id="matchMeta"></div>
+    <button class="block" id="exhaleBtn">Exhale</button>
+  </div>
+
+  <div class="card hidden" id="resultCard">
+    <div style="font-size:13px;color:#9fb0c7;">Breath Test Result</div>
+    <div class="readings">
+      <div class="reading">
+        <span>Alcohol</span>
+        <strong id="alcVal">—</strong>
+        <div class="pill" id="alcPill">—</div>
+      </div>
+      <div class="reading">
+        <span>Cannabis</span>
+        <strong id="canVal">—</strong>
+        <div class="pill" id="canPill">—</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;text-align:center;">
+      Attendance: <span class="pill" id="attPill">—</span>
+    </div>
+    <button class="block sec" id="scanAgainBtn">Scan Next Person</button>
+  </div>
+</div>
+
+<!-- ENROLL -->
+<div id="viewEnroll" class="hidden">
+  <div class="card">
+    <div class="status" id="enrollStatus">Enter details, then capture 3 photos.</div>
+    <label for="empCode">Employee ID</label>
+    <input id="empCode" placeholder="e.g. EMP001" />
+    <label for="empName">Full Name</label>
+    <input id="empName" placeholder="e.g. Ravi Kumar" />
+    <div class="video"><img id="enrollPreview" alt="Camera preview" crossorigin="anonymous" /></div>
+    <div class="row">
+      <button id="enrollCamBtn">Start Camera</button>
+      <button id="captureBtn" class="sec" disabled>Capture</button>
+    </div>
+    <div class="thumbs" id="thumbs"></div>
+    <button class="block" id="saveUserBtn" disabled>Need 3 Photos</button>
+  </div>
+</div>
+
+<!-- DATABASE -->
+<div id="viewDatabase" class="hidden">
+  <div class="card">
+    <div class="status" id="dbStatus">Registered employees.</div>
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Added</th><th></th></tr></thead>
+      <tbody id="dbBody"><tr><td colspan="4">Loading…</td></tr></tbody>
+    </table>
+    <button class="block sec" id="dbRefreshBtn">Refresh</button>
+  </div>
+</div>
+
+<!-- HISTORY -->
+<div id="viewHistory" class="hidden">
+  <div class="card">
+    <div class="status" id="histStatus">Recent attendance records.</div>
+    <table>
+      <thead><tr><th>Name</th><th>Time</th><th>Alcohol</th><th>Cannabis</th><th>Att.</th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="5">Loading…</td></tr></tbody>
+    </table>
+    <button class="block sec" id="histRefreshBtn">Refresh</button>
+  </div>
+</div>
+
+<canvas id="capture" class="hidden"></canvas>
+
+<script>
+"use strict";
+
+// DEMO OVERRIDE — REVERT LATER: when true the breath readings always display
+// clean placeholders ("0 BAC" / "Not present") regardless of sensor values,
+// matching the kiosk app's current demo behaviour. Set to false to show the
+// real measured values.
+const DEMO_PLACEHOLDER_READINGS = true;
+
+const CAMERA_ID = "demo-front-camera";
+const SCAN_DELAY_MS = 300;
+// Smaller frames than the kiosk app: far less CPU/memory per request, which
+// matters a lot on a 1GB board. Recognition quality is unaffected at this size.
+const FRAME_WIDTH = 640;
+const UNRECOGNIZED_MS = 12000;
+
+const el = (id) => document.getElementById(id);
+const VIEWS = {
+  home: { node: "viewHome", title: "Attendance" },
+  scan: { node: "viewScan", title: "Scan" },
+  enroll: { node: "viewEnroll", title: "New User" },
+  database: { node: "viewDatabase", title: "Database" },
+  history: { node: "viewHistory", title: "Attendance History" },
+};
+
+let currentView = "home";
+let scanning = false, scanTimer = null, inFlight = false, faceLocked = false;
+let unrecognizedSince = 0, currentMatch = null, breathSessionId = null;
+let enrollFrames = [], enrollCamOn = false;
+
+function setStatus(node, text, tone) {
+  node.textContent = text;
+  node.className = "status" + (tone ? " " + tone : "");
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  const headers = { Accept: "application/json" };
+  let body = opts.body || null;
+  if (opts.json) { headers["Content-Type"] = "application/json"; body = JSON.stringify(opts.json); }
+  const res = await fetch(path, { method: opts.method || "GET", headers: headers, body: body, cache: "no-store" });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+  if (!res.ok) throw new Error((data && (data.detail || data.message)) || text || ("Request failed (" + res.status + ")"));
+  return data;
+}
+
+function showView(name) {
+  Object.keys(VIEWS).forEach((key) => el(VIEWS[key].node).classList.add("hidden"));
+  el(VIEWS[name].node).classList.remove("hidden");
+  el("viewTitle").textContent = VIEWS[name].title;
+  el("homeBtn").classList.toggle("hidden", name === "home");
+  currentView = name;
+
+  if (name !== "scan") stopScan(true);
+  if (name !== "enroll") stopEnrollCam();
+  if (name === "database") loadWorkers();
+  if (name === "history") loadHistory();
+  if (name === "home") loadStats();
+}
+
+// ---------- shared camera helpers ----------
+function streamUrl() { return "/api/v2/local-camera/stream.mjpg?ts=" + Date.now(); }
+
+function grabFrame(imgEl, quality) {
+  return new Promise((resolve) => {
+    if (!imgEl.naturalWidth) return resolve(null);
+    let w = imgEl.naturalWidth, h = imgEl.naturalHeight;
+    if (w > FRAME_WIDTH) { h = Math.round(h * (FRAME_WIDTH / w)); w = FRAME_WIDTH; }
+    const c = el("capture");
+    c.width = w; c.height = h;
+    c.getContext("2d").drawImage(imgEl, 0, 0, w, h);
+    c.toBlob((b) => resolve(b), "image/jpeg", quality || 0.82);
+  });
+}
+
+// ---------- SCAN ----------
+function coachMessage(reason) {
+  const t = String(reason || "").toLowerCase();
+  if (!t || t.indexOf("pending") >= 0 || t.indexOf("waiting") >= 0) return "Verifying identity. Hold still.";
+  if (t.indexOf("multiple faces") >= 0 || t.indexOf("one employee") >= 0) return "One person at a time.";
+  if (t.indexOf("too small") >= 0) return "Move a little closer to the camera.";
+  if (t.indexOf("blur") >= 0 || t.indexOf("not stable") >= 0) return "Hold still for a moment.";
+  if (t.indexOf("re-enroll") >= 0 || t.indexOf("no enrolled") >= 0) return "BLOCKED:Enrollment incomplete. Add this employee again with 3 photos.";
+  return "UNKNOWN:Verifying identity. Keep looking at the camera.";
+}
+
+async function startScan() {
+  if (scanning) return;
+  scanning = true; faceLocked = false; unrecognizedSince = 0; currentMatch = null;
+  el("matchCard").classList.add("hidden");
+  el("resultCard").classList.add("hidden");
+  el("startBtn").disabled = true;
+  setStatus(el("scanStatus"), "Starting camera…");
+  try {
+    await api("/api/v2/local-camera/start", { method: "POST" });
+    el("preview").src = streamUrl();
+    setStatus(el("scanStatus"), "Camera live. Look at the screen.");
+    scanTimer = setTimeout(runScan, 700);
+  } catch (e) {
+    scanning = false; el("startBtn").disabled = false;
+    setStatus(el("scanStatus"), e.message, "err");
+  }
+}
+
+function stopScan(silent) {
+  if (!scanning && silent) { return; }
+  scanning = false; faceLocked = false; unrecognizedSince = 0;
+  if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+  el("preview").removeAttribute("src");
+  el("startBtn").disabled = false;
+  fetch("/api/v2/local-camera/stop", { method: "POST" }).catch(() => {});
+  if (!silent) setStatus(el("scanStatus"), "Scan stopped.");
+}
+
+function scheduleScan() { if (scanning && !currentMatch) scanTimer = setTimeout(runScan, SCAN_DELAY_MS); }
+
+async function runScan() {
+  if (!scanning || inFlight || currentMatch) return;
+  inFlight = true;
+  try {
+    if (!faceLocked) {
+      const blob = await grabFrame(el("preview"), 0.8);
+      if (!blob) return;
+      const fd = new FormData(); fd.append("image", blob, "d.jpg");
+      const det = await api("/api/v2/detections", { method: "POST", body: fd });
+      const n = det.detected_faces || 0;
+      if (n === 0) { unrecognizedSince = 0; setStatus(el("scanStatus"), "No face detected."); return; }
+      if (n > 1) { unrecognizedSince = 0; setStatus(el("scanStatus"), "One person at a time.", "warn"); return; }
+      faceLocked = true;
+      setStatus(el("scanStatus"), "Face detected. Hold still.");
+    }
+
+    const blob = await grabFrame(el("preview"), 0.85);
+    if (!blob) return;
+    const fd = new FormData();
+    fd.append("camera_id", CAMERA_ID);
+    fd.append("top_k", "3");
+    fd.append("image", blob, "s.jpg");
+    const res = await api("/api/v2/recognitions", { method: "POST", body: fd });
+
+    if (res.matches && res.matches.length) {
+      currentMatch = res.matches[0];
+      unrecognizedSince = 0;
+      setStatus(el("scanStatus"), currentMatch.name + " identified.", "ok");
+      el("matchName").textContent = currentMatch.name;
+      el("matchMeta").textContent = "ID " + currentMatch.employee_code + " · confidence " + Number(currentMatch.score).toFixed(3);
+      el("matchCard").classList.remove("hidden");
+      el("exhaleBtn").disabled = false;
+      el("exhaleBtn").textContent = "Exhale";
+      return;
+    }
+
+    const n = res.detected_faces || 0;
+    if (n === 0) { faceLocked = false; unrecognizedSince = 0; setStatus(el("scanStatus"), "No face detected."); return; }
+    if (n > 1) { faceLocked = false; unrecognizedSince = 0; setStatus(el("scanStatus"), "One person at a time.", "warn"); return; }
+
+    let reason = "";
+    if (res.debug_faces) { for (let i = 0; i < res.debug_faces.length; i++) { if (res.debug_faces[i].reason) { reason = res.debug_faces[i].reason; break; } } }
+    const msg = coachMessage(reason);
+    if (msg.indexOf("BLOCKED:") === 0) { setStatus(el("scanStatus"), msg.slice(8), "err"); return; }
+    const now = Date.now();
+    if (!unrecognizedSince) unrecognizedSince = now;
+    if (msg.indexOf("UNKNOWN:") === 0) {
+      if (now - unrecognizedSince >= UNRECOGNIZED_MS) {
+        setStatus(el("scanStatus"), "Face not recognized. Try again or add this user first.", "err");
+        return;
+      }
+      setStatus(el("scanStatus"), msg.slice(8));
+      return;
+    }
+    setStatus(el("scanStatus"), msg);
+  } catch (e) {
+    if (scanning) setStatus(el("scanStatus"), e.message, "err");
+  } finally {
+    inFlight = false;
+    scheduleScan();
+  }
+}
+
+async function runExhale() {
+  if (!currentMatch || breathSessionId) return;
+  el("exhaleBtn").disabled = true;
+  try {
+    const session = await api("/api/v2/breath-tests/start", {
+      method: "POST",
+      json: { worker_id: currentMatch.worker_id, camera_id: CAMERA_ID },
+    });
+    breathSessionId = session.session_id;
+    const secs = Math.max(1, Math.ceil(Number(session.sample_seconds) || 10));
+    for (let r = secs; r > 0; r--) {
+      setStatus(el("scanStatus"), "Exhale now — " + r + "s. Keep your face in view.", "warn");
+      el("exhaleBtn").textContent = "Exhale " + r + "s";
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    setStatus(el("scanStatus"), "Analyzing breath sample…");
+    const result = await api("/api/v2/breath-tests/complete", {
+      method: "POST",
+      json: { session_id: breathSessionId, matched_score: currentMatch.score },
+    });
+    breathSessionId = null;
+    showBreathResult(result);
+    stopScan(true);
+  } catch (e) {
+    if (breathSessionId) {
+      fetch("/api/v2/breath-tests/" + encodeURIComponent(breathSessionId), { method: "DELETE" }).catch(() => {});
+      breathSessionId = null;
+    }
+    setStatus(el("scanStatus"), e.message, "err");
+    el("exhaleBtn").disabled = false;
+    el("exhaleBtn").textContent = "Exhale";
+  }
+}
+
+function showBreathResult(result) {
+  const alcClear = DEMO_PLACEHOLDER_READINGS ? true : result.alcohol_clear;
+  const canClear = DEMO_PLACEHOLDER_READINGS ? true : result.cannabis_clear;
+  el("alcVal").textContent = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(result.alcohol_ppb).toFixed(1) + " ppb";
+  el("canVal").textContent = DEMO_PLACEHOLDER_READINGS ? "Not present" : Number(result.cannabis_ppb).toFixed(1) + " ppb";
+  el("alcPill").textContent = alcClear ? "Clear" : "Fail";
+  el("alcPill").className = "pill " + (alcClear ? "pass" : "fail");
+  el("canPill").textContent = canClear ? "Clear" : "Fail";
+  el("canPill").className = "pill " + (canClear ? "pass" : "fail");
+  el("attPill").textContent = result.attendance_marked ? "Marked" : "Not Marked";
+  el("attPill").className = "pill " + (result.attendance_marked ? "pass" : "fail");
+  el("matchCard").classList.add("hidden");
+  el("resultCard").classList.remove("hidden");
+
+  if (result.attendance_marked) setStatus(el("scanStatus"), result.name + " — attendance marked.", "ok");
+  else setStatus(el("scanStatus"), result.name + " — attendance not marked (already marked recently).", "warn");
+}
+
+function resetScanFlow() {
+  currentMatch = null; faceLocked = false; unrecognizedSince = 0;
+  el("matchCard").classList.add("hidden");
+  el("resultCard").classList.add("hidden");
+  startScan();
+}
+
+// ---------- ENROLL ----------
+async function startEnrollCam() {
+  try {
+    await api("/api/v2/local-camera/start", { method: "POST" });
+    el("enrollPreview").src = streamUrl();
+    enrollCamOn = true;
+    el("captureBtn").disabled = false;
+    setStatus(el("enrollStatus"), "Camera live. Capture 3 photos: front, slight left, slight right.");
+  } catch (e) {
+    setStatus(el("enrollStatus"), e.message, "err");
+  }
+}
+
+function stopEnrollCam() {
+  if (!enrollCamOn) return;
+  enrollCamOn = false;
+  el("enrollPreview").removeAttribute("src");
+  el("captureBtn").disabled = true;
+  fetch("/api/v2/local-camera/stop", { method: "POST" }).catch(() => {});
+}
+
+async function capturePhoto() {
+  const blob = await grabFrame(el("enrollPreview"), 0.9);
+  if (!blob) { setStatus(el("enrollStatus"), "Camera frame not ready yet.", "warn"); return; }
+  enrollFrames.push(blob);
+  const img = document.createElement("img");
+  img.src = URL.createObjectURL(blob);
+  el("thumbs").appendChild(img);
+  const hints = ["Now turn slightly left.", "Now turn slightly right.", "All photos captured."];
+  setStatus(el("enrollStatus"), "Photo " + enrollFrames.length + " of 3 captured. " + (hints[enrollFrames.length - 1] || ""));
+  updateSaveButton();
+}
+
+function updateSaveButton() {
+  const ready = enrollFrames.length >= 3;
+  el("saveUserBtn").disabled = !ready;
+  el("saveUserBtn").textContent = ready ? "Save User" : "Need 3 Photos (" + enrollFrames.length + "/3)";
+}
+
+async function saveUser() {
+  const code = el("empCode").value.trim();
+  const name = el("empName").value.trim();
+  if (!code || !name) { setStatus(el("enrollStatus"), "Enter both Employee ID and Full Name.", "warn"); return; }
+  if (enrollFrames.length < 3) { setStatus(el("enrollStatus"), "Capture 3 photos first.", "warn"); return; }
+
+  el("saveUserBtn").disabled = true;
+  setStatus(el("enrollStatus"), "Saving employee…");
+  try {
+    const fd = new FormData();
+    fd.append("employee_code", code);
+    fd.append("name", name);
+    fd.append("replace_existing", "true");
+    for (let i = 0; i < enrollFrames.length; i++) fd.append("images", enrollFrames[i], "p" + i + ".jpg");
+    const res = await api("/api/v2/workers/enroll", { method: "POST", body: fd });
+    const savedName = (res && res.worker && res.worker.name) || name;
+    setStatus(el("enrollStatus"), savedName + " saved with " + enrollFrames.length + " photos.", "ok");
+    clearEnrollForm();
+  } catch (e) {
+    setStatus(el("enrollStatus"), e.message, "err");
+    el("saveUserBtn").disabled = false;
+  }
+}
+
+function clearEnrollForm() {
+  enrollFrames = [];
+  el("thumbs").innerHTML = "";
+  el("empCode").value = "";
+  el("empName").value = "";
+  updateSaveButton();
+}
+
+// ---------- DATABASE ----------
+async function loadWorkers() {
+  try {
+    const rows = await api("/api/v2/workers");
+    const body = el("dbBody");
+    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='4'>No employees registered yet.</td></tr>"; return; }
+    body.innerHTML = "";
+    rows.forEach((w) => {
+      const tr = document.createElement("tr");
+      let added = "—";
+      if (w.created_at) {
+        const iso = w.created_at + (String(w.created_at).endsWith("Z") ? "" : "Z");
+        added = new Date(iso).toLocaleDateString();
+      }
+      tr.innerHTML = "<td>" + w.employee_code + "</td><td>" + w.name + "</td><td>" + added + "</td>";
+      const td = document.createElement("td");
+      const btn = document.createElement("button");
+      btn.className = "danger"; btn.textContent = "Delete";
+      btn.style.padding = "5px 9px"; btn.style.fontSize = "12px";
+      btn.addEventListener("click", () => removeWorker(w.employee_code, w.name));
+      td.appendChild(btn); tr.appendChild(td);
+      body.appendChild(tr);
+    });
+    setStatus(el("dbStatus"), rows.length + " employee(s) registered.");
+  } catch (e) {
+    setStatus(el("dbStatus"), e.message, "err");
+  }
+}
+
+async function removeWorker(code, name) {
+  setStatus(el("dbStatus"), "Removing " + name + "…");
+  try {
+    await api("/api/v2/workers/" + encodeURIComponent(code), { method: "DELETE" });
+    setStatus(el("dbStatus"), name + " removed.", "ok");
+    loadWorkers();
+  } catch (e) {
+    setStatus(el("dbStatus"), e.message, "err");
+  }
+}
+
+// ---------- HISTORY ----------
+async function loadHistory() {
+  try {
+    const rows = await api("/api/v2/attendance?limit=50");
+    const body = el("histBody");
+    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='5'>No attendance records yet.</td></tr>"; return; }
+    body.innerHTML = rows.map((r) => {
+      const iso = r.created_at + (String(r.created_at).endsWith("Z") ? "" : "Z");
+      const when = new Date(iso).toLocaleString();
+      const alc = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(r.alcohol_ppb).toFixed(1);
+      const can = DEMO_PLACEHOLDER_READINGS ? "None" : Number(r.cannabis_ppb).toFixed(1);
+      const att = r.attendance_marked;
+      return "<tr><td>" + r.name + "</td><td>" + when + "</td><td>" + alc + "</td><td>" + can +
+             "</td><td><span class='pill " + (att ? "pass'>Yes" : "fail'>No") + "</span></td></tr>";
+    }).join("");
+    setStatus(el("histStatus"), rows.length + " record(s).");
+  } catch (e) {
+    setStatus(el("histStatus"), e.message, "err");
+  }
+}
+
+async function loadStats() {
+  try {
+    const s = await api("/api/v2/status");
+    el("homeStats").textContent = "Registered employees: " + (s.indexed_workers != null ? s.indexed_workers : "—");
+  } catch (e) { el("homeStats").textContent = ""; }
+}
+
+// ---------- wiring ----------
+document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.go)));
+el("homeBtn").addEventListener("click", () => showView("home"));
+el("startBtn").addEventListener("click", startScan);
+el("stopBtn").addEventListener("click", () => stopScan(false));
+el("exhaleBtn").addEventListener("click", runExhale);
+el("scanAgainBtn").addEventListener("click", resetScanFlow);
+el("enrollCamBtn").addEventListener("click", startEnrollCam);
+el("captureBtn").addEventListener("click", capturePhoto);
+el("saveUserBtn").addEventListener("click", saveUser);
+el("dbRefreshBtn").addEventListener("click", loadWorkers);
+el("histRefreshBtn").addEventListener("click", loadHistory);
+
+showView("home");
+
+// ---------- on-screen keyboard ----------
+(function () {
+  const L = {
+    default: [["1","2","3","4","5","6","7","8","9","0"],["q","w","e","r","t","y","u","i","o","p"],
+              ["a","s","d","f","g","h","j","k","l"],["shift","z","x","c","v","b","n","m","backspace"],
+              ["symbols","@","space",".","done"]],
+    shift:   [["1","2","3","4","5","6","7","8","9","0"],["Q","W","E","R","T","Y","U","I","O","P"],
+              ["A","S","D","F","G","H","J","K","L"],["shift","Z","X","C","V","B","N","M","backspace"],
+              ["symbols","@","space",".","done"]],
+    symbols: [["1","2","3","4","5","6","7","8","9","0"],["!","@","#","$","%","^","&","*","(",")"],
+              ["-","_","=","+","[","]","{","}",";"],[":","'","\"",",",".","/","?","backspace"],
+              ["abc","space","done"]],
+  };
+  const LB = { shift: "⇧", backspace: "⌫", space: "space", done: "Done", symbols: "?123", abc: "ABC" };
+  let active = null, layout = "default", hideTimer = null;
+  const kb = document.createElement("div");
+  kb.className = "osk hidden";
+  document.body.appendChild(kb);
+
+  function typeable(e) { return e && e.tagName === "INPUT" && ["text", "email", "number", "password", ""].indexOf((e.getAttribute("type") || "text").toLowerCase()) >= 0; }
+
+  function render() {
+    kb.innerHTML = "";
+    (L[layout] || L.default).forEach((row) => {
+      const r = document.createElement("div"); r.className = "osk-row";
+      row.forEach((k) => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "osk-key"; b.dataset.k = k;
+        b.textContent = LB[k] || k;
+        b.addEventListener("pointerdown", (ev) => ev.preventDefault());
+        b.addEventListener("mousedown", (ev) => ev.preventDefault());
+        b.addEventListener("click", () => press(k));
+        r.appendChild(b);
+      });
+      kb.appendChild(r);
+    });
+  }
+
+  function insert(t) {
+    if (!active) return;
+    let s = null, e = null;
+    try { s = active.selectionStart; e = active.selectionEnd; } catch (x) {}
+    if (s == null) active.value += t;
+    else { active.value = active.value.slice(0, s) + t + active.value.slice(e); try { const c = s + t.length; active.setSelectionRange(c, c); } catch (x) {} }
+    active.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function back() {
+    if (!active) return;
+    let s = null, e = null;
+    try { s = active.selectionStart; e = active.selectionEnd; } catch (x) {}
+    if (s == null) active.value = active.value.slice(0, -1);
+    else if (s === e) { if (s === 0) return; active.value = active.value.slice(0, s - 1) + active.value.slice(e); try { active.setSelectionRange(s - 1, s - 1); } catch (x) {} }
+    else { active.value = active.value.slice(0, s) + active.value.slice(e); try { active.setSelectionRange(s, s); } catch (x) {} }
+    active.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function press(k) {
+    if (!active) return;
+    if (k === "shift") { layout = layout === "shift" ? "default" : "shift"; render(); return; }
+    if (k === "symbols") { layout = "symbols"; render(); return; }
+    if (k === "abc") { layout = "default"; render(); return; }
+    if (k === "backspace") { back(); return; }
+    if (k === "space") { insert(" "); return; }
+    if (k === "done") { kb.classList.add("hidden"); active.blur(); active = null; return; }
+    insert(k);
+    if (layout === "shift") { layout = "default"; render(); }
+  }
+
+  document.addEventListener("focusin", (e) => {
+    if (typeable(e.target)) {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      active = e.target; layout = "default"; render(); kb.classList.remove("hidden");
+      setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (x) {} }, 60);
+    }
+  });
+  document.addEventListener("focusout", () => {
+    hideTimer = setTimeout(() => { if (!typeable(document.activeElement)) { kb.classList.add("hidden"); active = null; } }, 200);
+  });
+})();
+</script>
+</body>
+</html>

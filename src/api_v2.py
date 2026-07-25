@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from pathlib import Path
 import threading
@@ -278,10 +278,30 @@ def _frontend_response(path: Path) -> FileResponse:
     return response
 
 
+def demo_mode_enabled() -> bool:
+    # DEMO MODE: when ATTENDANCE_DEMO_MODE is on, every authenticated endpoint
+    # is reachable WITHOUT a login. This exists only for the offline
+    # demonstration build (`python app.py demo`) on low-memory devices. It is
+    # OFF by default; `kiosk`, `web`, `simple`, and `native` never set it, so
+    # their authentication is unaffected. Never enable it on a networked or
+    # production device.
+    return os.getenv("ATTENDANCE_DEMO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _demo_session() -> SessionState:
+    return SessionState(
+        session_id="demo-mode",
+        username="demo",
+        expires_at=datetime.utcnow() + timedelta(days=365),
+    )
+
+
 def require_auth(
     authorization: Optional[str] = Header(default=None),
     x_auth_token: Optional[str] = Header(default=None),
 ) -> SessionState:
+    if demo_mode_enabled():
+        return _demo_session()
     token = _extract_token(authorization, x_auth_token)
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required.")
@@ -296,6 +316,8 @@ def require_camera_auth(
     authorization: Optional[str] = Header(default=None),
     x_auth_token: Optional[str] = Header(default=None),
 ) -> SessionState:
+    if demo_mode_enabled():
+        return _demo_session()
     resolved_token = _extract_token(authorization, x_auth_token)
     if not resolved_token and token:
         resolved_token = token.strip()
@@ -356,6 +378,18 @@ def simple_frontend() -> Response:
     if SIMPLE_FRONTEND_INDEX.exists():
         return _frontend_response(SIMPLE_FRONTEND_INDEX)
     return JSONResponse({"detail": "simple_frontend/index.html is missing."}, status_code=404)
+
+
+DEMO_FRONTEND_INDEX = BASE_DIR / "demo_frontend" / "index.html"
+
+
+@app.get("/demo", response_class=HTMLResponse, response_model=None)
+def demo_frontend() -> Response:
+    # DEMO build: minimal single-file UI for low-memory devices, no login.
+    # Only reachable in a useful state when ATTENDANCE_DEMO_MODE is enabled.
+    if DEMO_FRONTEND_INDEX.exists():
+        return _frontend_response(DEMO_FRONTEND_INDEX)
+    return JSONResponse({"detail": "demo_frontend/index.html is missing."}, status_code=404)
 
 
 _LOGIN_LOCKOUT_MAX_FAILURES = int(os.getenv("ATTENDANCE_LOGIN_LOCKOUT_MAX_FAILURES", "5"))
