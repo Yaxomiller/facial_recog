@@ -8,8 +8,11 @@ const EXHALE_SECONDS = 10;
 const SCAN_LOOP_DELAY_MS = 250;
 const EXHALE_FACE_CHECK_INTERVAL_MS = 3000;
 const STABLE_SINGLE_FACE_FRAMES = 1;
-const DETECTION_FRAME_MAX_WIDTH = 960;
-const RECOGNITION_FRAME_MAX_WIDTH = 960;
+// Match the camera's capture width (640): asking for more just means no
+// downscale happens, so keeping these aligned avoids sending needlessly large
+// JPEGs for the backend to decode on every scan cycle.
+const DETECTION_FRAME_MAX_WIDTH = 640;
+const RECOGNITION_FRAME_MAX_WIDTH = 640;
 const UNRECOGNIZED_WARNING_MS = 12000;
 
 // Internal threshold rejections are the system's concern, not the user's.

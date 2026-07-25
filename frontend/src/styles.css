@@ -563,6 +563,30 @@ input:focus {
   object-fit: cover;
   border-radius: 18px;
   border: 1px solid rgba(23, 48, 95, 0.14);
+  display: block;
+}
+
+.capture-thumb {
+  position: relative;
+}
+
+.capture-thumb-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--danger, #b42318);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
 }
 
 .result-card,

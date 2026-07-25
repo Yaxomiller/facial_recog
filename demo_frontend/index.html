@@ -89,7 +89,14 @@
   .reading span { font-size: 11px; color: #90a0b8; text-transform: uppercase; letter-spacing: 0.06em; }
   .reading strong { display: block; font-size: 19px; margin: 6px 0 8px; }
   .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #33405a; }
+  .thumb { position: relative; width: 56px; height: 56px; }
+  .thumb img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #33405a; display: block; }
+  .thumb-del {
+    position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
+    padding: 0; border-radius: 50%; background: #a83c37; color: #fff;
+    font-size: 13px; font-weight: 700; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
   .hidden { display: none !important; }
   .muted { color: #7f8da3; font-size: 11px; margin-top: 8px; }
 
@@ -205,6 +212,7 @@
       <button id="captureBtn" class="sec" disabled>Capture</button>
     </div>
     <div class="thumbs" id="thumbs"></div>
+    <button class="block sec hidden" id="clearPhotosBtn">Clear All Photos</button>
     <button class="block" id="saveUserBtn" disabled>Need 3 Photos</button>
   </div>
 </div>
@@ -226,8 +234,8 @@
   <div class="card">
     <div class="status" id="histStatus">Recent attendance records.</div>
     <table>
-      <thead><tr><th>Name</th><th>Time</th><th>Alcohol</th><th>Cannabis</th><th>U/L</th><th>Att.</th></tr></thead>
-      <tbody id="histBody"><tr><td colspan="6">Loading…</td></tr></tbody>
+      <thead><tr><th>Name</th><th>Time</th><th>Alcohol</th><th>Cannabis</th><th>U/L</th><th>Att.</th><th></th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="7">Loading…</td></tr></tbody>
     </table>
     <button class="block sec" id="histRefreshBtn">Refresh</button>
   </div>
@@ -526,18 +534,52 @@ async function capturePhoto() {
   const blob = await grabFrame(el("enrollPreview"), 0.9);
   if (!blob) { setStatus(el("enrollStatus"), "Camera frame not ready yet.", "warn"); return; }
   enrollFrames.push(blob);
-  const img = document.createElement("img");
-  img.src = URL.createObjectURL(blob);
-  el("thumbs").appendChild(img);
+  renderThumbs();
   const hints = ["Now turn slightly left.", "Now turn slightly right.", "All photos captured."];
   setStatus(el("enrollStatus"), "Photo " + enrollFrames.length + " of 3 captured. " + (hints[enrollFrames.length - 1] || ""));
+}
+
+function renderThumbs() {
+  const box = el("thumbs");
+  // Revoke previous object URLs before rebuilding: without this every
+  // recapture leaks a full JPEG in browser memory, which matters on a 1GB board.
+  [...box.querySelectorAll("img")].forEach((img) => URL.revokeObjectURL(img.src));
+  box.innerHTML = "";
+  enrollFrames.forEach((blob, index) => {
+    const wrap = document.createElement("div");
+    wrap.className = "thumb";
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(blob);
+    const del = document.createElement("button");
+    del.className = "thumb-del";
+    del.type = "button";
+    del.textContent = "×";
+    del.title = "Delete this photo";
+    del.addEventListener("click", () => removePhoto(index));
+    wrap.appendChild(img);
+    wrap.appendChild(del);
+    box.appendChild(wrap);
+  });
   updateSaveButton();
+}
+
+function removePhoto(index) {
+  enrollFrames.splice(index, 1);
+  renderThumbs();
+  setStatus(el("enrollStatus"), "Photo removed. " + enrollFrames.length + " of 3 captured. Retake it when ready.");
+}
+
+function clearPhotos() {
+  enrollFrames = [];
+  renderThumbs();
+  setStatus(el("enrollStatus"), "All photos cleared. Capture 3 fresh photos.");
 }
 
 function updateSaveButton() {
   const ready = enrollFrames.length >= 3;
   el("saveUserBtn").disabled = !ready;
   el("saveUserBtn").textContent = ready ? "Save User" : "Need 3 Photos (" + enrollFrames.length + "/3)";
+  el("clearPhotosBtn").classList.toggle("hidden", enrollFrames.length === 0);
 }
 
 async function saveUser() {
@@ -566,10 +608,9 @@ async function saveUser() {
 
 function clearEnrollForm() {
   enrollFrames = [];
-  el("thumbs").innerHTML = "";
+  renderThumbs();
   el("empCode").value = "";
   el("empName").value = "";
-  updateSaveButton();
 }
 
 // ---------- DATABASE ----------
@@ -617,19 +658,43 @@ async function loadHistory() {
   try {
     const rows = await api("/api/v2/attendance?limit=50");
     const body = el("histBody");
-    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='6'>No attendance records yet.</td></tr>"; return; }
-    body.innerHTML = rows.map((r) => {
+    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='7'>No attendance records yet.</td></tr>"; return; }
+    body.innerHTML = "";
+    rows.forEach((r) => {
       const iso = r.created_at + (String(r.created_at).endsWith("Z") ? "" : "Z");
       const when = new Date(iso).toLocaleString();
       const alc = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(r.alcohol_ppb).toFixed(2);
       const can = DEMO_PLACEHOLDER_READINGS ? "None" : Number(r.cannabis_ppb).toFixed(2);
       const ratio = DEMO_PLACEHOLDER_READINGS ? "—" : (Number(r.cannabis_ratio) || 0).toFixed(2);
       const att = r.attendance_marked;
-      return "<tr><td>" + r.name + "</td><td>" + when + "</td><td>" + alc + "</td><td>" + can +
-             "</td><td>" + ratio +
-             "</td><td><span class='pill " + (att ? "pass'>Yes" : "fail'>No") + "</span></td></tr>";
-    }).join("");
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + r.name + "</td><td>" + when + "</td><td>" + alc + "</td><td>" + can +
+        "</td><td>" + ratio +
+        "</td><td><span class='pill " + (att ? "pass'>Yes" : "fail'>No") + "</span></td>";
+      const td = document.createElement("td");
+      const btn = document.createElement("button");
+      btn.className = "danger";
+      btn.textContent = "Delete";
+      btn.style.padding = "5px 9px";
+      btn.style.fontSize = "12px";
+      btn.addEventListener("click", () => removeAttendance(r.id, r.name));
+      td.appendChild(btn);
+      tr.appendChild(td);
+      body.appendChild(tr);
+    });
     setStatus(el("histStatus"), rows.length + " record(s).");
+  } catch (e) {
+    setStatus(el("histStatus"), e.message, "err");
+  }
+}
+
+async function removeAttendance(attendanceId, name) {
+  setStatus(el("histStatus"), "Removing record for " + name + "…");
+  try {
+    await api("/api/v2/attendance/" + encodeURIComponent(attendanceId), { method: "DELETE" });
+    setStatus(el("histStatus"), "Record removed.", "ok");
+    loadHistory();
   } catch (e) {
     setStatus(el("histStatus"), e.message, "err");
   }
@@ -651,6 +716,7 @@ el("exhaleBtn").addEventListener("click", runExhale);
 el("scanAgainBtn").addEventListener("click", resetScanFlow);
 el("enrollCamBtn").addEventListener("click", startEnrollCam);
 el("captureBtn").addEventListener("click", capturePhoto);
+el("clearPhotosBtn").addEventListener("click", clearPhotos);
 el("saveUserBtn").addEventListener("click", saveUser);
 el("dbRefreshBtn").addEventListener("click", loadWorkers);
 el("histRefreshBtn").addEventListener("click", loadHistory);

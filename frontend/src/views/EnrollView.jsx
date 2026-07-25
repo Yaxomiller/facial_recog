@@ -45,6 +45,17 @@ export default function EnrollView({ token, onUpdated }) {
     setFrames([]);
   }
 
+  function removeFrame(index) {
+    const target = frames[index];
+    if (target) {
+      URL.revokeObjectURL(target.preview);
+    }
+    setFrames((current) => current.filter((_frame, position) => position !== index));
+    setMessage(
+      `Picture removed. ${frames.length - 1} of ${MIN_ENROLLMENT_IMAGES} taken. Capture it again when ready.`,
+    );
+  }
+
   async function handleStartCamera() {
     try {
       await startUserCamera({
@@ -154,8 +165,19 @@ export default function EnrollView({ token, onUpdated }) {
 
         <div className="capture-strip">
           {frames.length ? (
-            frames.map((frame) => (
-              <img key={frame.preview} src={frame.preview} alt="Employee preview" />
+            frames.map((frame, index) => (
+              <div className="capture-thumb" key={frame.preview}>
+                <img src={frame.preview} alt="Employee preview" />
+                <button
+                  className="capture-thumb-remove"
+                  onClick={() => removeFrame(index)}
+                  type="button"
+                  title="Delete this picture"
+                  aria-label="Delete this picture"
+                >
+                  ×
+                </button>
+              </div>
             ))
           ) : (
             <div className="empty-state">{`Added pictures will appear here. Capture at least ${MIN_ENROLLMENT_IMAGES}.`}</div>

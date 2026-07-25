@@ -869,9 +869,16 @@ def local_camera_stream(_: SessionState = Depends(require_camera_auth)) -> Strea
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def generate() -> Iterator[bytes]:
+        # Block for the NEXT frame rather than polling on a timer: the camera
+        # thread paces us, so we never re-send a frame the client already has
+        # and never spin faster than the sensor delivers.
+        last_sequence: Optional[int] = None
         while True:
             try:
-                frame_bytes = local_camera_proxy.get_frame_bytes(timeout_seconds=5.0)
+                frame_bytes, last_sequence = local_camera_proxy.get_frame(
+                    timeout_seconds=5.0,
+                    after_sequence=last_sequence,
+                )
             except RuntimeError:
                 break
 
@@ -882,7 +889,6 @@ def local_camera_stream(_: SessionState = Depends(require_camera_auth)) -> Strea
                 + frame_bytes
                 + b"\r\n"
             )
-            time.sleep(0.03)
 
     response = StreamingResponse(
         generate(),

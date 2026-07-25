@@ -20,12 +20,11 @@ class LocalCameraApiTests(unittest.TestCase):
             with patch.object(api_v2.local_camera_proxy, "start", return_value="Radxa GStreamer pipeline (/dev/video0)") as start:
                 with patch.object(
                     api_v2.local_camera_proxy,
-                    "get_frame_bytes",
-                    side_effect=[b"jpeg-bytes", RuntimeError("stream complete")],
+                    "get_frame",
+                    side_effect=[(b"jpeg-bytes", 1), RuntimeError("stream complete")],
                 ):
-                    with patch.object(api_v2.time, "sleep", return_value=None):
-                        response = api_v2.local_camera_stream(None)
-                        chunks = asyncio.run(_collect_chunks(response))
+                    response = api_v2.local_camera_stream(None)
+                    chunks = asyncio.run(_collect_chunks(response))
 
         body = b"".join(chunks)
         self.assertEqual(response.status_code, 200)
@@ -34,6 +33,27 @@ class LocalCameraApiTests(unittest.TestCase):
         self.assertIn(b"--frame", body)
         self.assertIn(b"jpeg-bytes", body)
         start.assert_called_once_with()
+
+    def test_stream_only_requests_frames_newer_than_the_last_one_sent(self) -> None:
+        # Each iteration must ask for a frame strictly newer than the one it
+        # just sent, so a slow camera never causes duplicate frames to be
+        # pushed to the browser.
+        requested: list[object] = []
+
+        def fake_get_frame(timeout_seconds: float = 2.0, after_sequence=None):
+            requested.append(after_sequence)
+            if len(requested) > 3:
+                raise RuntimeError("stream complete")
+            return b"frame-%d" % len(requested), len(requested)
+
+        with patch.object(api_v2.local_camera_proxy, "is_running", return_value=True):
+            with patch.object(api_v2.local_camera_proxy, "get_frame", side_effect=fake_get_frame):
+                response = api_v2.local_camera_stream(None)
+                body = b"".join(asyncio.run(_collect_chunks(response)))
+
+        self.assertEqual(requested, [None, 1, 2, 3])
+        for index in (1, 2, 3):
+            self.assertIn(b"frame-%d" % index, body)
 
 
 if __name__ == "__main__":

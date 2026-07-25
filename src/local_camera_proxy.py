@@ -10,7 +10,7 @@ import cv2
 from src.camera import CameraStream, open_camera
 
 
-JPEG_QUALITY = max(40, min(100, int(os.getenv("ATTENDANCE_LOCAL_CAMERA_JPEG_QUALITY", "80"))))
+JPEG_QUALITY = max(40, min(100, int(os.getenv("ATTENDANCE_LOCAL_CAMERA_JPEG_QUALITY", "70"))))
 STARTUP_TIMEOUT_SECONDS = max(0.5, float(os.getenv("ATTENDANCE_LOCAL_CAMERA_STARTUP_TIMEOUT_SECONDS", "4.0")))
 
 
@@ -21,6 +21,7 @@ class LocalCameraProxy:
         self._stop_event: Optional[threading.Event] = None
         self._camera: Optional[CameraStream] = None
         self._latest_jpeg: Optional[bytes] = None
+        self._frame_sequence = 0
         self._source_name = ""
         self._last_error = ""
 
@@ -69,9 +70,25 @@ class LocalCameraProxy:
             return self._source_name
 
     def get_frame_bytes(self, timeout_seconds: float = 2.0) -> bytes:
+        return self.get_frame(timeout_seconds=timeout_seconds)[0]
+
+    def get_frame(
+        self,
+        timeout_seconds: float = 2.0,
+        after_sequence: Optional[int] = None,
+    ) -> tuple[bytes, int]:
+        """Return (jpeg_bytes, sequence).
+
+        With `after_sequence` the call blocks until a frame NEWER than that
+        sequence is available, so the MJPEG stream never re-sends a frame the
+        client already has — that duplicate traffic was costing both the board
+        and the browser real work at 30 requests/second.
+        """
         with self._condition:
             deadline = time.monotonic() + timeout_seconds
-            while self._latest_jpeg is None:
+            while self._latest_jpeg is None or (
+                after_sequence is not None and self._frame_sequence <= after_sequence
+            ):
                 if self._last_error:
                     raise RuntimeError(self._last_error)
                 if self._thread is None or not self._thread.is_alive():
@@ -82,7 +99,7 @@ class LocalCameraProxy:
                     raise RuntimeError("Timed out waiting for the local camera frame.")
                 self._condition.wait(timeout=min(0.25, remaining))
 
-            return self._latest_jpeg
+            return self._latest_jpeg, self._frame_sequence
 
     def _wait_for_first_frame_locked(self, timeout_seconds: float) -> str:
         deadline = time.monotonic() + timeout_seconds
@@ -130,6 +147,7 @@ class LocalCameraProxy:
 
                 with self._condition:
                     self._latest_jpeg = encoded.tobytes()
+                    self._frame_sequence += 1
                     self._condition.notify_all()
 
                 stop_event.wait(0.01)

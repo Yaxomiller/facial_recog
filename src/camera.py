@@ -55,16 +55,23 @@ def _default_device_path() -> str:
     return os.getenv("ATTENDANCE_CAMERA_DEVICE", DEFAULT_DEVICE).strip() or DEFAULT_DEVICE
 
 
+# Capture at the resolution the UIs actually use. Every front-end downscales
+# frames to 640px wide before sending them for detection/recognition, so
+# capturing 1280x720 meant paying ~4x the pixels for the ISP copy, the
+# rotate/flip, the brightness LUT and the JPEG encode, then throwing most of
+# it away. 15fps is ample for a kiosk preview and halves the encode load
+# again — together roughly 6x less CPU in the capture thread, which is what
+# made the 1GB board feel sluggish whenever the camera was on.
 def _default_width() -> int:
-    return _int_env("ATTENDANCE_CAMERA_WIDTH", 1280)
+    return _int_env("ATTENDANCE_CAMERA_WIDTH", 640)
 
 
 def _default_height() -> int:
-    return _int_env("ATTENDANCE_CAMERA_HEIGHT", 720)
+    return _int_env("ATTENDANCE_CAMERA_HEIGHT", 480)
 
 
 def _default_framerate() -> int:
-    return _int_env("ATTENDANCE_CAMERA_FRAMERATE", 30)
+    return _int_env("ATTENDANCE_CAMERA_FRAMERATE", 15)
 
 
 def _default_timeout_seconds() -> float:
