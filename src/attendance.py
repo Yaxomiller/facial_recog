@@ -112,6 +112,16 @@ def _browser_app_command(url: str) -> Optional[list[str]]:
         f"--app={url}",
         "--disable-pinch",
         "--overscroll-history-navigation=0",
+        # After a power cut or service restart Chromium otherwise greets the
+        # operator with "didn't shut down correctly" / restore-pages bars that
+        # sit on top of an unattended kiosk display until someone dismisses
+        # them.
+        "--disable-session-crashed-bubble",
+        "--hide-crash-restore-bubble",
+        "--noerrdialogs",
+        "--disable-infobars",
+        "--no-first-run",
+        "--no-default-browser-check",
     ]
 
     # Default to fullscreen so the app fills the entire Radxa screen. Set

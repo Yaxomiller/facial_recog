@@ -1,0 +1,9 @@
+# This repo is developed on Windows (core.autocrlf=true) and deployed to a
+# Linux device. Files the Radxa executes must keep LF endings: a shell script
+# checked out with CRLF fails as "bad interpreter: /bin/bash^M".
+*.sh text eol=lf
+*.service text eol=lf
+*.desktop text eol=lf
+# systemd does not strip a trailing CR from EnvironmentFile values, so
+# "ATTENDANCE_APP_MODE=demo\r" would reach argparse as an invalid choice.
+*.env text eol=lf

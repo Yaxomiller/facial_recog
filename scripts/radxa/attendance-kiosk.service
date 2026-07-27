@@ -1,0 +1,40 @@
+[Unit]
+Description=Attendance kiosk (full-screen on the device display)
+# The app needs a running X session, not just the network.
+After=graphical.target systemd-user-sessions.service
+Wants=graphical.target
+# A boot loop caused by a real fault should surface in the journal instead of
+# hammering the board forever. These keys belong in [Unit]; systemd ignores
+# them in [Service] and only logs an "unknown key" warning.
+StartLimitIntervalSec=120
+StartLimitBurst=8
+
+[Service]
+Type=simple
+# Runs as the desktop user, never root: root cannot reach the user's display.
+# The primary group is inherited, so no explicit Group= is needed.
+User=__USER__
+WorkingDirectory=__APP_DIR__
+
+# Settings live outside the repo so a `git pull` never overwrites them and no
+# secrets end up in version control. See attendance-kiosk.env for the options.
+EnvironmentFile=-/etc/default/attendance-kiosk
+Environment=DISPLAY=:0
+Environment=ATTENDANCE_APP_DIR=__APP_DIR__
+
+ExecStart=__APP_DIR__/scripts/radxa/start-kiosk.sh
+
+# Keep the screen filled: restart on crash, on a clean exit, and if the
+# operator closes the browser window.
+Restart=always
+RestartSec=5
+
+# Stop the browser the app spawned, not just the python process.
+KillMode=control-group
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target
