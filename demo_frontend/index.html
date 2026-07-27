@@ -192,6 +192,16 @@
       <strong id="confVal">—</strong>
       <div class="muted" id="confDetail" style="margin-top:0;">&nbsp;</div>
     </div>
+    <div class="reading" id="sensorDetail" style="margin-top:10px;text-align:left;">
+      <span>Sensor Detail (for calibration)</span>
+      <table style="margin-top:6px;">
+        <tr><td>Alcohol baseline</td><td id="alcBase" class="mono">—</td></tr>
+        <tr><td>Alcohol peak</td><td id="alcPeak" class="mono">—</td></tr>
+        <tr><td>Cannabis baseline</td><td id="canBase" class="mono">—</td></tr>
+        <tr><td>Cannabis peak</td><td id="canPeak" class="mono">—</td></tr>
+        <tr><td>Upper / lower area</td><td id="areaDetail" class="mono">—</td></tr>
+      </table>
+    </div>
     <div style="margin-top:10px;text-align:center;">
       Attendance: <span class="pill" id="attPill">—</span>
     </div>
@@ -494,6 +504,16 @@ function showBreathResult(result) {
       " / lower " + (Number(result.cannabis_lower) || 0).toFixed(3) + " mV·s";
   }
 
+  // Sensor-native detail, the numbers you calibrate limits against.
+  // AD5941 alcohol cell in uA, AD7798 PID in mV.
+  const n = (v) => (Number(v) || 0);
+  el("alcBase").textContent = n(result.alcohol_baseline).toFixed(3) + " µA";
+  el("alcPeak").textContent = n(result.alcohol_peak).toFixed(3) + " µA";
+  el("canBase").textContent = n(result.cannabis_baseline).toFixed(3) + " mV";
+  el("canPeak").textContent = n(result.cannabis_peak).toFixed(3) + " mV";
+  el("areaDetail").textContent =
+    n(result.cannabis_upper).toFixed(4) + " / " + n(result.cannabis_lower).toFixed(4) + " mV·s";
+
   el("attPill").textContent = result.attendance_marked ? "Marked" : "Not Marked";
   el("attPill").className = "pill " + (result.attendance_marked ? "pass" : "fail");
   el("matchCard").classList.add("hidden");
@@ -721,9 +741,16 @@ function showSensorState(status) {
     return;
   }
   const requested = String(status.requested_breath_analyzer || "");
-  banner.textContent = requested === "mock"
-    ? "Simulated sensor: readings are generated and the pump will not run. Start with ATTENDANCE_BREATH_ANALYZER_MODE=spi to use the breath board."
-    : "Breath board unavailable — using simulated readings, so the pump will not run. See the server startup warnings.";
+  if (requested === "mock") {
+    banner.textContent = "Simulated sensor: readings are generated and the pump will not run. "
+      + "Set ATTENDANCE_BREATH_ANALYZER_MODE=spi to use the breath board.";
+  } else {
+    // The board was asked for but could not be opened. Show the real reason
+    // here rather than sending the operator to the journal.
+    const reason = (status.warnings || []).find((w) => /breath|spi|pump|sensor/i.test(w));
+    banner.textContent = "Breath board unavailable — simulated readings, pump will not run. "
+      + (reason || "Check the server startup warnings.");
+  }
   banner.classList.remove("hidden");
 }
 
