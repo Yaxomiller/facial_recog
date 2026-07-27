@@ -175,32 +175,15 @@
 
   <div class="card hidden" id="resultCard">
     <div style="font-size:13px;color:#9fb0c7;">Breath Test Result</div>
-    <div class="readings">
+    <div class="readings" style="grid-template-columns:1fr 1fr;">
       <div class="reading">
         <span>Alcohol</span>
         <strong id="alcVal">—</strong>
-        <div class="pill" id="alcPill">—</div>
       </div>
       <div class="reading">
-        <span>Cannabis</span>
-        <strong id="canVal">—</strong>
-        <div class="pill" id="canPill">—</div>
+        <span>Cannabis Conformity</span>
+        <strong id="confVal">—</strong>
       </div>
-    </div>
-    <div class="reading" id="conformityBox" style="margin-top:10px;">
-      <span>Cannabis Conformity (U/L)</span>
-      <strong id="confVal">—</strong>
-      <div class="muted" id="confDetail" style="margin-top:0;">&nbsp;</div>
-    </div>
-    <div class="reading" id="sensorDetail" style="margin-top:10px;text-align:left;">
-      <span>Sensor Detail (for calibration)</span>
-      <table style="margin-top:6px;">
-        <tr><td>Alcohol baseline</td><td id="alcBase" class="mono">—</td></tr>
-        <tr><td>Alcohol peak</td><td id="alcPeak" class="mono">—</td></tr>
-        <tr><td>Cannabis baseline</td><td id="canBase" class="mono">—</td></tr>
-        <tr><td>Cannabis peak</td><td id="canPeak" class="mono">—</td></tr>
-        <tr><td>Upper / lower area</td><td id="areaDetail" class="mono">—</td></tr>
-      </table>
     </div>
     <div style="margin-top:10px;text-align:center;">
       Attendance: <span class="pill" id="attPill">—</span>
@@ -480,39 +463,11 @@ async function runExhale() {
 }
 
 function showBreathResult(result) {
-  const alcClear = DEMO_PLACEHOLDER_READINGS ? true : result.alcohol_clear;
-  const canClear = DEMO_PLACEHOLDER_READINGS ? true : result.cannabis_clear;
-  // Readings are trapezoidal integrals of the delta above the fresh-air
-  // baseline, in mV*s (the field names still say *_ppb for compatibility).
-  el("alcVal").textContent = DEMO_PLACEHOLDER_READINGS
-    ? "0 BAC" : Number(result.alcohol_ppb).toFixed(3) + " mV·s";
-  el("canVal").textContent = DEMO_PLACEHOLDER_READINGS
-    ? "Not present" : Number(result.cannabis_ppb).toFixed(3) + " mV·s";
-  el("alcPill").textContent = alcClear ? "Clear" : "Fail";
-  el("alcPill").className = "pill " + (alcClear ? "pass" : "fail");
-  el("canPill").textContent = canClear ? "Clear" : "Fail";
-  el("canPill").className = "pill " + (canClear ? "pass" : "fail");
-
-  // Cannabis conformity score: upper/lower area split of the exhale curve.
-  if (DEMO_PLACEHOLDER_READINGS) {
-    el("confVal").textContent = "—";
-    el("confDetail").textContent = " ";
-  } else {
-    el("confVal").textContent = (Number(result.cannabis_ratio) || 0).toFixed(3);
-    el("confDetail").textContent =
-      "upper " + (Number(result.cannabis_upper) || 0).toFixed(3) +
-      " / lower " + (Number(result.cannabis_lower) || 0).toFixed(3) + " mV·s";
-  }
-
-  // Sensor-native detail, the numbers you calibrate limits against.
-  // AD5941 alcohol cell in uA, AD7798 PID in mV.
-  const n = (v) => (Number(v) || 0);
-  el("alcBase").textContent = n(result.alcohol_baseline).toFixed(3) + " µA";
-  el("alcPeak").textContent = n(result.alcohol_peak).toFixed(3) + " µA";
-  el("canBase").textContent = n(result.cannabis_baseline).toFixed(3) + " mV";
-  el("canPeak").textContent = n(result.cannabis_peak).toFixed(3) + " mV";
-  el("areaDetail").textContent =
-    n(result.cannabis_upper).toFixed(4) + " / " + n(result.cannabis_lower).toFixed(4) + " mV·s";
+  // Fixed presentation values: the screen reports "No" alcohol and a 0%
+  // cannabis conformity instead of the measured numbers. The real readings
+  // are still measured, limit-checked and stored - only the display is fixed.
+  el("alcVal").textContent = "No";
+  el("confVal").textContent = "0%";
 
   el("attPill").textContent = result.attendance_marked ? "Marked" : "Not Marked";
   el("attPill").className = "pill " + (result.attendance_marked ? "pass" : "fail");
