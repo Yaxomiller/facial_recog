@@ -15,6 +15,7 @@ from src.v2.cache import RecognitionCache
 from src.v2.config import (
     ALLOW_BACKEND_FALLBACK,
     AMBIGUITY_MARGIN,
+    BREATH_ANALYZER_MODE,
     DEFAULT_LIST_LIMIT,
     FACE_SIZE,
     LBPH_CONFIDENCE_THRESHOLD,
@@ -684,6 +685,8 @@ class ScalableAttendanceService:
             attendance_events=counts["attendance_events"],
             cache_entries=self.recognition_cache.active_entries(),
             active_detector=detector_backend_name(),
+            requested_breath_analyzer=BREATH_ANALYZER_MODE,
+            active_breath_analyzer=self.breath_analyzer.name,
             requested_embedder=self.requested_embedder,
             active_embedder=self.active_embedder,
             requested_index=self.requested_index,

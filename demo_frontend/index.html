@@ -158,6 +158,7 @@
 <!-- SCAN -->
 <div id="viewScan" class="hidden">
   <div class="card">
+    <div class="status warn hidden" id="sensorBanner"></div>
     <div class="status" id="scanStatus">Press Start to scan.</div>
     <div class="video"><img id="preview" alt="Camera preview" crossorigin="anonymous" /></div>
     <div class="row">
@@ -301,7 +302,7 @@ function showView(name) {
   if (name !== "enroll") stopEnrollCam();
   if (name === "database") loadWorkers();
   if (name === "history") loadHistory();
-  if (name === "home") loadStats();
+  if (name === "home" || name === "scan") loadStats();
 }
 
 // ---------- shared camera helpers ----------
@@ -704,7 +705,26 @@ async function loadStats() {
   try {
     const s = await api("/api/v2/status");
     el("homeStats").textContent = "Registered employees: " + (s.indexed_workers != null ? s.indexed_workers : "—");
+    showSensorState(s);
   } catch (e) { el("homeStats").textContent = ""; }
+}
+
+// Make it obvious when the breath board is not actually driving the test.
+// In mock mode the screen still walks through "preparing sensor" and
+// "exhale now", but nothing is measured and the pump never runs — without
+// this banner that looks like broken hardware.
+function showSensorState(status) {
+  const active = String(status.active_breath_analyzer || "");
+  const banner = el("sensorBanner");
+  if (!active || active === "spi") {
+    banner.classList.add("hidden");
+    return;
+  }
+  const requested = String(status.requested_breath_analyzer || "");
+  banner.textContent = requested === "mock"
+    ? "Simulated sensor: readings are generated and the pump will not run. Start with ATTENDANCE_BREATH_ANALYZER_MODE=spi to use the breath board."
+    : "Breath board unavailable — using simulated readings, so the pump will not run. See the server startup warnings.";
+  banner.classList.remove("hidden");
 }
 
 // ---------- wiring ----------

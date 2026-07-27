@@ -151,6 +151,10 @@ class ServiceStatus(BaseModel):
     attendance_events: int
     cache_entries: int
     active_detector: str
+    # "spi" when the sensor board is driving the readings, "mock" when they
+    # are simulated (in which case the pump never runs).
+    requested_breath_analyzer: str = ""
+    active_breath_analyzer: str = ""
     requested_embedder: str
     active_embedder: str
     requested_index: str
