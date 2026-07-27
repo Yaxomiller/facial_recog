@@ -793,6 +793,57 @@ class SpiBreathAnalyzer(BreathAnalyzer):
 LiveSpiBreathAnalyzer = SpiBreathAnalyzer
 
 
+class PumpGuard:
+    """Holds the breath pump line LOW whenever the sensor driver is not.
+
+    Without this the pump is only ever controlled in `spi` mode. In `mock`
+    mode — which is the default, and what `app.py demo`/`kiosk` run — no GPIO
+    is opened at all, so a pump left running by a previous process, another
+    service, or the board's power-on default keeps running and nothing in this
+    app can stop it.
+
+    The line is claimed as an output already driven low and HELD for the life
+    of the process: closing it would release the line back to an undriven
+    input, where it can float high again.
+    """
+
+    def __init__(self, periphery_module: Optional[Any] = None) -> None:
+        self.periphery = periphery_module or importlib.import_module("periphery")
+        self.pump = self.periphery.GPIO(BREATH_GPIO_CHIP, BREATH_PUMP_GPIO, "low")
+        self.pump.write(False)
+        self._shut_down = False
+
+    def shutdown(self) -> None:
+        if self._shut_down:
+            return
+        self._shut_down = True
+        try:
+            self.pump.write(False)
+        except Exception:
+            pass
+        try:
+            self.pump.close()
+        except Exception:
+            pass
+
+
+def _guard_pump_when_sensor_is_idle() -> tuple[str, ...]:
+    """Force the pump off in non-SPI modes. Returns any startup warnings."""
+    if os.getenv("ATTENDANCE_BREATH_PUMP_GUARD", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return ()
+    try:
+        guard = PumpGuard()
+    except Exception as exc:
+        # No periphery, no such GPIO chip, or the line is held by another
+        # process. Nothing to guard on this machine — say so rather than
+        # pretending the pump is under control.
+        return (f"Breath pump line could not be forced off ({exc}).",)
+
+    _register_pump_shutdown(guard)
+    logger.info("breath pump line %s held low (sensor idle)", BREATH_PUMP_GPIO)
+    return ()
+
+
 def resolve_breath_analyzer() -> BreathAnalyzer:
     if BREATH_ANALYZER_MODE in {"spi", "live", "hardware"}:
         try:
@@ -801,12 +852,12 @@ def resolve_breath_analyzer() -> BreathAnalyzer:
             return MockBreathAnalyzer(
                 startup_warnings=(
                     f"SPI breath board unavailable ({exc}). Using mock readings.",
-                )
+                ) + _guard_pump_when_sensor_is_idle()
             )
     if BREATH_ANALYZER_MODE == "mock":
-        return MockBreathAnalyzer()
+        return MockBreathAnalyzer(startup_warnings=_guard_pump_when_sensor_is_idle())
     return MockBreathAnalyzer(
         startup_warnings=(
             f"Unsupported breath analyzer mode '{BREATH_ANALYZER_MODE}'. Falling back to mock readings.",
-        )
+        ) + _guard_pump_when_sensor_is_idle()
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import struct
 import unittest
 from unittest.mock import patch
@@ -18,7 +19,9 @@ from src.breath_analyzer import (
     ChannelResult,
     CycleResult,
     MockBreathAnalyzer,
+    PumpGuard,
     SpiBreathAnalyzer,
+    _guard_pump_when_sensor_is_idle,
     area_ratio,
     build_reading_from_cycle,
     crc16_ccitt,
@@ -409,10 +412,72 @@ class MockAnalyzerTests(unittest.TestCase):
         self.assertAlmostEqual(analyzer.cycle_seconds, 30.0, places=3)
 
 
+class PumpGuardTests(unittest.TestCase):
+    """In mock mode no sensor driver runs, so nothing else holds the pump."""
+
+    def test_guard_claims_the_pump_line_already_driven_low(self) -> None:
+        periphery = _LevelTrackingPeriphery()
+        guard = PumpGuard(periphery_module=periphery)
+
+        self.assertEqual(guard.pump.direction, "low")
+        self.assertNotIn(True, guard.pump.history)
+        self.assertFalse(guard.pump.level)
+
+    def test_guard_holds_the_line_instead_of_releasing_it(self) -> None:
+        periphery = _LevelTrackingPeriphery()
+        guard = PumpGuard(periphery_module=periphery)
+
+        # Closing would release the line back to an undriven input, where it
+        # can float high again — it must stay claimed for the process life.
+        self.assertFalse(guard.pump.closed)
+
+    def test_guard_shutdown_drives_low_then_releases_and_is_idempotent(self) -> None:
+        guard = PumpGuard(periphery_module=_LevelTrackingPeriphery())
+        guard.pump.write(True)
+
+        guard.shutdown()
+        guard.shutdown()
+
+        self.assertFalse(guard.pump.level)
+        self.assertTrue(guard.pump.closed)
+
+    def test_mock_mode_forces_the_pump_off(self) -> None:
+        created: list[PumpGuard] = []
+
+        def fake_guard():
+            guard = PumpGuard(periphery_module=_LevelTrackingPeriphery())
+            created.append(guard)
+            return guard
+
+        with patch("src.breath_analyzer.BREATH_ANALYZER_MODE", "mock"):
+            with patch("src.breath_analyzer.PumpGuard", side_effect=fake_guard):
+                analyzer = resolve_breath_analyzer()
+
+        self.assertIsInstance(analyzer, MockBreathAnalyzer)
+        self.assertEqual(len(created), 1, "mock mode left the pump line untouched")
+        self.assertFalse(created[0].pump.level)
+
+    def test_missing_hardware_is_reported_rather_than_silently_ignored(self) -> None:
+        with patch("src.breath_analyzer.BREATH_ANALYZER_MODE", "mock"):
+            with patch("src.breath_analyzer.PumpGuard", side_effect=RuntimeError("no gpiochip")):
+                analyzer = resolve_breath_analyzer()
+
+        self.assertTrue(
+            any("could not be forced off" in warning for warning in analyzer.startup_warnings),
+            analyzer.startup_warnings,
+        )
+
+    def test_guard_can_be_disabled_for_boards_without_a_pump(self) -> None:
+        with patch.dict(os.environ, {"ATTENDANCE_BREATH_PUMP_GUARD": "0"}, clear=False):
+            with patch("src.breath_analyzer.PumpGuard", side_effect=AssertionError("must not be built")):
+                self.assertEqual(_guard_pump_when_sensor_is_idle(), ())
+
+
 class ResolveAnalyzerTests(unittest.TestCase):
     def test_mock_mode_returns_the_mock_analyzer(self) -> None:
         with patch("src.breath_analyzer.BREATH_ANALYZER_MODE", "mock"):
-            self.assertIsInstance(resolve_breath_analyzer(), MockBreathAnalyzer)
+            with patch("src.breath_analyzer.PumpGuard", side_effect=RuntimeError("no hardware")):
+                self.assertIsInstance(resolve_breath_analyzer(), MockBreathAnalyzer)
 
     def test_spi_mode_falls_back_to_mock_when_the_board_is_missing(self) -> None:
         with patch("src.breath_analyzer.BREATH_ANALYZER_MODE", "spi"):
