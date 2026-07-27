@@ -156,6 +156,151 @@ class FrameProtocolTests(unittest.TestCase):
         self.assertEqual(analyzer.pump.writes[0], False)
 
 
+class _LevelTrackingGPIO(_FakeGPIO):
+    """GPIO whose plain "out" request comes up HIGH, like the real board."""
+
+    def __init__(self, chip: str, line: int, direction: str, edge: str = "none") -> None:
+        super().__init__(chip, line, direction, edge)
+        self.level = direction in {"out", "high"}
+        self.closed = False
+        self.history: list[bool] = [self.level]
+
+    def write(self, value: bool) -> None:
+        super().write(value)
+        self.level = bool(value)
+        self.history.append(self.level)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _LevelTrackingPeriphery(_FakePeriphery):
+    def GPIO(self, chip: str, line: int, direction: str, edge: str = "none"):  # noqa: N802
+        gpio = _LevelTrackingGPIO(chip, line, direction, edge)
+        self.gpios.append(gpio)
+        return gpio
+
+
+class PumpSafetyTests(unittest.TestCase):
+    """The pump must never run when no measurement is in progress."""
+
+    def _analyzer(self):
+        with patch("threading.Thread"), patch("time.sleep"):
+            return SpiBreathAnalyzer(periphery_module=_LevelTrackingPeriphery())
+
+    def test_pump_is_requested_already_driven_low(self) -> None:
+        analyzer = self._analyzer()
+
+        # A plain "out" request leaves the initial level to the driver and this
+        # line comes up HIGH, starting the pump the moment the app opens it.
+        self.assertEqual(analyzer.pump.direction, "low")
+        self.assertNotIn(True, analyzer.pump.history)
+        self.assertFalse(analyzer.pump.level)
+
+    def test_bus_is_opened_only_after_the_pump_is_known_off(self) -> None:
+        opened: list[str] = []
+
+        class OrderedPeriphery(_LevelTrackingPeriphery):
+            def GPIO(self, chip, line, direction, edge="none"):  # noqa: N802
+                gpio = super().GPIO(chip, line, direction, edge)
+                original_write = gpio.write
+
+                def tracking_write(value):
+                    original_write(value)
+                    if line == 271 and value is False:
+                        opened.append("pump-low")
+
+                gpio.write = tracking_write
+                return gpio
+
+            def SPI(self, device, mode, speed_hz):  # noqa: N802
+                opened.append("spi")
+                return super().SPI(device, mode, speed_hz)
+
+        with patch("threading.Thread"), patch("time.sleep"):
+            SpiBreathAnalyzer(periphery_module=OrderedPeriphery())
+
+        # Opening the bus first would stretch the window in which the pump is
+        # running by however long the bus takes to come up.
+        self.assertIn("pump-low", opened)
+        self.assertIn("spi", opened)
+        self.assertLess(opened.index("pump-low"), opened.index("spi"))
+
+    def test_pump_stops_before_the_slow_board_handshake(self) -> None:
+        analyzer = self._analyzer()
+        order: list[str] = []
+
+        def slow_handshake(commands, max_tries=15, timeout=None):
+            order.append("handshake")
+            return False
+
+        original_write = analyzer.pump.write
+
+        def tracking_write(value):
+            original_write(value)
+            if value is False:
+                order.append("pump-off")
+
+        analyzer.pump.write = tracking_write
+        analyzer._send_commands = slow_handshake
+        analyzer.pump.write(True)
+        order.clear()
+
+        # Drive the same teardown the cycle's finally block performs.
+        try:
+            analyzer.pump.write(False)
+        except Exception:
+            pass
+        try:
+            analyzer._send_commands([CMD_PID_SHUTDOWN])
+        except Exception:
+            pass
+
+        # _send_commands retries up to 15 frames, each able to burn ~5s waiting
+        # for a doorbell plus ~5s on the deassert bound; stopping the pump must
+        # not queue behind that.
+        self.assertEqual(order, ["pump-off", "handshake"])
+        self.assertFalse(analyzer.pump.level)
+
+    def test_shutdown_drives_lines_low_and_releases_them(self) -> None:
+        analyzer = self._analyzer()
+        analyzer.pump.write(True)
+
+        analyzer.shutdown()
+
+        # A released GPIO reverts to an undriven input, so it must be driven
+        # low before it is closed.
+        self.assertFalse(analyzer.pump.level)
+        self.assertTrue(analyzer.pump.closed)
+        self.assertFalse(analyzer.trigger.level)
+        self.assertTrue(analyzer.trigger.closed)
+
+    def test_shutdown_is_idempotent_and_survives_closed_hardware(self) -> None:
+        analyzer = self._analyzer()
+        analyzer.shutdown()
+        analyzer.shutdown()   # must not raise
+
+        self.assertFalse(analyzer.pump.level)
+
+    def test_mock_analyzer_exposes_a_shutdown_noop(self) -> None:
+        MockBreathAnalyzer().shutdown()   # must not raise
+
+    def test_a_failed_startup_still_leaves_the_pump_recoverable(self) -> None:
+        # resolve_breath_analyzer() falls back to the mock when construction
+        # raises, discarding this instance — the shutdown hook must already
+        # know about it or the lines stay open with nothing driving them low.
+        periphery = _LevelTrackingPeriphery()
+        registered: list[object] = []
+
+        with patch("threading.Thread"), patch("time.sleep"):
+            with patch("src.breath_analyzer._register_pump_shutdown", side_effect=registered.append):
+                with patch.object(SpiBreathAnalyzer, "_reset_board", side_effect=RuntimeError("board dead")):
+                    with self.assertRaises(RuntimeError):
+                        SpiBreathAnalyzer(periphery_module=periphery)
+
+        self.assertEqual(len(registered), 1, "shutdown hook not registered before first board access")
+
+
 class UnitConversionTests(unittest.TestCase):
     def test_pid_scale_matches_the_ad7798_datasheet(self) -> None:
         self.assertAlmostEqual(PID_MV_PER_LSB, 0.019073, places=6)

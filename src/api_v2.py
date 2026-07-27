@@ -344,6 +344,12 @@ def verify_session_backend() -> None:
 @app.on_event("shutdown")
 def shutdown_local_camera_proxy() -> None:
     local_camera_proxy.stop()
+    # Stop the breath pump on uvicorn's graceful shutdown path too, so it is
+    # never left running after the service is stopped or restarted.
+    try:
+        service.breath_analyzer.shutdown()
+    except Exception:
+        pass
 
 
 @app.get("/", response_class=HTMLResponse, response_model=None)

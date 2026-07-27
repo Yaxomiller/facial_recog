@@ -43,14 +43,18 @@ the values they carry are mV*s integrals, not parts per billion.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import atexit
+from dataclasses import dataclass
 import importlib
 import logging
 import math
+import os
 import random
+import signal
 import struct
 import threading
 import time
+import weakref
 from typing import Any, Callable, Optional
 
 from src.v2.config import (
@@ -260,6 +264,63 @@ def build_breath_reading(
     )
 
 
+_pump_shutdown_hooks_installed = False
+_live_analyzers: "weakref.WeakSet[Any]" = weakref.WeakSet()
+
+
+def _shutdown_live_analyzers() -> None:
+    for analyzer in list(_live_analyzers):
+        try:
+            analyzer.shutdown()
+        except Exception:
+            pass
+
+
+def _register_pump_shutdown(analyzer: Any) -> None:
+    """Guarantee the pump is driven low when the process goes away.
+
+    A released GPIO reverts to an undriven input, so without this a
+    stop/restart or Ctrl-C mid-scan leaves the pump powered with nothing in
+    control of it. Signal handlers are chained so uvicorn still gets its own
+    graceful shutdown.
+    """
+    global _pump_shutdown_hooks_installed
+
+    _live_analyzers.add(analyzer)
+    if _pump_shutdown_hooks_installed:
+        return
+    _pump_shutdown_hooks_installed = True
+
+    atexit.register(_shutdown_live_analyzers)
+
+    # signal.signal only works on the main thread; a worker-thread import must
+    # not crash, it simply relies on atexit and the FastAPI shutdown hook.
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    def _install(signal_number: int) -> None:
+        try:
+            previous = signal.getsignal(signal_number)
+        except (ValueError, OSError):
+            return
+
+        def _handler(received_number, frame):
+            _shutdown_live_analyzers()
+            if callable(previous) and previous not in (signal.SIG_IGN, signal.SIG_DFL):
+                previous(received_number, frame)
+            elif previous == signal.SIG_DFL:
+                signal.signal(received_number, signal.SIG_DFL)
+                os.kill(os.getpid(), received_number)
+
+        try:
+            signal.signal(signal_number, _handler)
+        except (ValueError, OSError):
+            pass
+
+    for signal_number in (signal.SIGTERM, signal.SIGINT):
+        _install(signal_number)
+
+
 class BreathAnalyzer:
     name = "base"
     startup_warnings: tuple[str, ...] = ()
@@ -289,6 +350,9 @@ class BreathAnalyzer:
 
     def stabilize(self) -> None:
         """App-start priming; no-op for the mock."""
+
+    def shutdown(self) -> None:
+        """Release hardware; no-op when there is none."""
 
 
 def _mock_bell(measure_ms: float, baseline: float, peak_delta: float,
@@ -377,9 +441,20 @@ class SpiBreathAnalyzer(BreathAnalyzer):
         # state. The stabilize pass below rebuilds its zero/baseline state.
         self.trigger = self.periphery.GPIO(BREATH_GPIO_CHIP, BREATH_BOARD_ENABLE_GPIO, "high")
         self.ready = self.periphery.GPIO(BREATH_GPIO_CHIP, BREATH_READY_GPIO, "in", edge="falling")
-        self.pump = self.periphery.GPIO(BREATH_GPIO_CHIP, BREATH_PUMP_GPIO, "out")
-        self.spi = self.periphery.SPI(BREATH_SPI_DEVICE, BREATH_SPI_MODE, BREATH_SPI_SPEED_HZ)
+        # Request the pump as an output ALREADY DRIVEN LOW in one atomic step.
+        # A plain "out" request leaves the initial level to the driver and this
+        # line comes up HIGH, which starts the pump the instant the app opens
+        # it. Opening the SPI bus before the pump is known-off would stretch
+        # that window by however long the bus takes to come up, so the bus is
+        # opened only afterwards.
+        self.pump = self.periphery.GPIO(BREATH_GPIO_CHIP, BREATH_PUMP_GPIO, "low")
         self.pump.write(False)
+        self.spi = self.periphery.SPI(BREATH_SPI_DEVICE, BREATH_SPI_MODE, BREATH_SPI_SPEED_HZ)
+        # Register before the first board access: if _reset_board() raises,
+        # resolve_breath_analyzer() falls back to the mock and this instance is
+        # discarded, so without this the lines would be left open with BRD_ON
+        # still high and nothing able to drive the pump low.
+        _register_pump_shutdown(self)
         self._reset_board()
         self._last_frame_at = time.monotonic()
         threading.Thread(target=self._keepalive_loop, daemon=True).start()
@@ -655,17 +730,49 @@ class SpiBreathAnalyzer(BreathAnalyzer):
                 # "finishing" so scan screens don't read it as a live test —
                 # a new scan started now simply queues behind this lock.
                 self.state = "finishing"
+                # Stop the pump FIRST. It is a direct GPIO write that needs no
+                # board communication, whereas _send_commands retries up to 15
+                # frames and each frame can burn ~5s waiting for a doorbell
+                # plus ~5s on the deassert bound — against a slow or wedged
+                # board that left the pump running for minutes after the blow.
+                try:
+                    self.pump.write(False)
+                except Exception:
+                    pass
                 # Shut down the PID lamp, but deliberately leave AFE sampling
                 # on so its doorbell frames can carry the next PID START.
                 try:
                     self._send_commands([CMD_PID_SHUTDOWN])
                 except Exception:
                     pass
-                try:
-                    self.pump.write(False)
-                except Exception:
-                    pass
                 self.state = "ready"
+
+    def shutdown(self) -> None:
+        """Drive the pump and board-enable low, then release the lines.
+
+        Without this, stopping the service (or Ctrl-C) mid-scan just lets the
+        kernel release the GPIO: it reverts to an undriven input and the pump
+        keeps running with no software in control.
+        """
+        if getattr(self, "_shut_down", False):
+            return
+        self._shut_down = True
+        for line in ("pump", "trigger"):
+            gpio = getattr(self, line, None)
+            if gpio is None:
+                continue
+            try:
+                gpio.write(False)
+            except Exception:
+                pass
+        for resource in ("pump", "trigger", "ready", "spi"):
+            handle = getattr(self, resource, None)
+            if handle is None:
+                continue
+            try:
+                handle.close()
+            except Exception:
+                pass
 
     def _build_result(self, stats: dict) -> CycleResult:
         def channel(source: int) -> ChannelResult:
