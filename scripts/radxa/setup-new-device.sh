@@ -60,11 +60,29 @@ else
     echo "    .venv already exists (kept)"
 fi
 
-.venv/bin/python -m pip install --upgrade pip wheel
-.venv/bin/python -m pip install -r requirements.txt
+# --no-cache-dir and generous retries: the wheels here are large (OpenCV and
+# MediaPipe are ~100MB combined) and a truncated download on a slow link
+# surfaces as a confusing "PACKAGES DO NOT MATCH THE HASHES" error, with a
+# corrupted file then cached so every retry fails the same way.
+PIP_OPTS=(--no-cache-dir --retries 10 --timeout 60)
+
+.venv/bin/python -m pip install "${PIP_OPTS[@]}" --upgrade pip wheel
+
+for attempt in 1 2 3; do
+    if .venv/bin/python -m pip install "${PIP_OPTS[@]}" -r requirements.txt; then
+        break
+    fi
+    if [ "$attempt" -eq 3 ]; then
+        echo "!! dependency install failed after 3 attempts; check the network and re-run" >&2
+        exit 1
+    fi
+    echo "   install attempt ${attempt} failed, retrying..."
+    .venv/bin/python -m pip cache purge >/dev/null 2>&1 || true
+    sleep 5
+done
 
 # Optional: only needed to drive the real breath board over SPI/GPIO.
-.venv/bin/python -m pip install python-periphery || \
+.venv/bin/python -m pip install "${PIP_OPTS[@]}" python-periphery || \
     echo "!! python-periphery not installed; breath board (spi mode) will be unavailable"
 
 echo
