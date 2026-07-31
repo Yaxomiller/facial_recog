@@ -2,9 +2,13 @@
 # One-shot provisioning for a FRESH Radxa: system packages, python
 # environment, then the boot-time kiosk service.
 #
-#   git clone https://github.com/Yaxomiller/facial_recog.git ~/Projects/facial_recog
+#   git clone -b new-development \
+#       https://github.com/Yaxomiller/facial_recog.git ~/Projects/facial_recog
 #   cd ~/Projects/facial_recog
 #   ./scripts/radxa/setup-new-device.sh
+#
+# The -b matters: a plain clone checks out the default branch (master), which
+# does not have this script or any of the kiosk deployment work.
 #
 # Run as the normal desktop user (NOT with sudo) -- it calls sudo itself where
 # it needs to. Safe to re-run.
@@ -16,6 +20,19 @@ cd "$APP_DIR"
 if [ "$(id -u)" -eq 0 ]; then
     echo "Run as your normal user, not root:  ./scripts/radxa/setup-new-device.sh" >&2
     exit 1
+fi
+
+# A plain `git clone` lands on master, which has none of the kiosk work. Say so
+# plainly instead of provisioning the wrong code onto a new board.
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+if [ "$branch" != "new-development" ]; then
+    echo "!! This checkout is on '$branch', but the app lives on 'new-development'."
+    echo "   Switch with:  git checkout new-development && git pull origin new-development"
+    read -r -p "   Continue anyway? [y/N] " reply
+    case "$reply" in
+        [yY]*) ;;
+        *) exit 1 ;;
+    esac
 fi
 
 echo "==> 1/4  System packages"
