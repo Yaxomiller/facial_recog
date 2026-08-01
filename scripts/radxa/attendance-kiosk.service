@@ -21,6 +21,10 @@ WorkingDirectory=__APP_DIR__
 EnvironmentFile=-/etc/default/attendance-kiosk
 Environment=DISPLAY=:0
 Environment=ATTENDANCE_APP_DIR=__APP_DIR__
+# Python block-buffers stdout when it is a pipe rather than a terminal, so
+# print() diagnostics sat in the buffer and never reached the journal — the
+# log showed uvicorn's stderr but none of the app's own startup messages.
+Environment=PYTHONUNBUFFERED=1
 
 ExecStart=__APP_DIR__/scripts/radxa/start-kiosk.sh
 

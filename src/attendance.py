@@ -138,21 +138,52 @@ def _browser_app_command(url: str) -> Optional[list[str]]:
     return command
 
 
-def _open_frontend_window(url: str, browser_mode: str) -> None:
+def _wait_for_server(port: int, timeout_seconds: float) -> bool:
+    """Block until the backend accepts connections on `port`."""
+    import socket
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def _open_frontend_window(url: str, browser_mode: str, port: int) -> None:
     import threading
     import webbrowser
 
     def open_window() -> None:
+        # Loading the recognition models can take minutes on a cold board, so
+        # opening the browser on a fixed short delay pointed it at a server
+        # that was not listening yet: Chromium showed ERR_CONNECTION_REFUSED
+        # and exited, leaving a blank screen with nothing in the logs.
+        timeout_seconds = float(os.getenv("ATTENDANCE_SERVER_WAIT_SECONDS", "900"))
+        if not _wait_for_server(port, timeout_seconds):
+            print(
+                f"Backend did not start listening on port {port} within "
+                f"{timeout_seconds:.0f}s; opening the browser anyway.",
+                flush=True,
+            )
+
         if browser_mode == "app":
             command = _browser_app_command(url)
             if command:
+                print(f"Opening {command[0]}", flush=True)
                 subprocess.Popen(command)
                 return
-            print("No supported app-mode browser was found on PATH. Falling back to the default browser.")
+            print(
+                "No supported app-mode browser was found on PATH. Falling back to the default browser.",
+                flush=True,
+            )
 
         webbrowser.open(url)
 
-    threading.Timer(1.0, open_window).start()
+    threading.Thread(target=open_window, daemon=True).start()
 
 
 def launch_native_desktop_app() -> None:
@@ -186,7 +217,7 @@ def launch_web_app(
         "on",
     }
     if should_open_browser:
-        _open_frontend_window(url, resolved_browser_mode)
+        _open_frontend_window(url, resolved_browser_mode, port)
 
     print(f"Starting browser UI at {url}")
     if host in {"0.0.0.0", "::"}:
