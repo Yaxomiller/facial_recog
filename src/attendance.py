@@ -81,6 +81,18 @@ def _resolve_browser_executable(candidate: str) -> Optional[str]:
     return shutil.which(stripped)
 
 
+def _firefox_app_command(browser_path: str, url: str) -> list[str]:
+    """Firefox has no --app; --kiosk is its full-screen equivalent."""
+    command = [browser_path, "--kiosk"]
+    if os.getenv("ATTENDANCE_APP_FULLSCREEN", "true").strip().lower() not in {"1", "true", "yes", "on"}:
+        command = [browser_path]
+        width = os.getenv("ATTENDANCE_APP_WIDTH", "430").strip() or "430"
+        height = os.getenv("ATTENDANCE_APP_HEIGHT", "932").strip() or "932"
+        command.extend(["--width", width, "--height", height])
+    command.append(url)
+    return command
+
+
 def _browser_app_command(url: str) -> Optional[list[str]]:
     explicit_browser = os.getenv("ATTENDANCE_APP_BROWSER", "").strip()
     candidates = [explicit_browser] if explicit_browser else []
@@ -93,6 +105,10 @@ def _browser_app_command(url: str) -> Optional[list[str]]:
             "microsoft-edge",
             "msedge",
             "brave-browser",
+            # Fallback for boards where the Chromium build crashes (some ARM
+            # builds die with SIGILL on Allwinner CPUs).
+            "firefox",
+            "firefox-esr",
         ]
     )
 
@@ -104,6 +120,9 @@ def _browser_app_command(url: str) -> Optional[list[str]]:
 
     if not browser_path:
         return None
+
+    if "firefox" in Path(browser_path).name.lower():
+        return _firefox_app_command(browser_path, url)
 
     # Kiosk-friendly flags: fill the whole screen and disable pinch-zoom and
     # swipe-back so the touchscreen UI stays put on the Radxa.
