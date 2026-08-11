@@ -36,140 +36,20 @@ import argparse
 import csv
 import sys
 import time
-from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
 
-# --- INA745B register map (16-bit unless noted) ------------------------------
-REG_CONFIG = 0x00
-REG_ADC_CONFIG = 0x01
-REG_SHUNT_CAL = 0x02
-REG_VSHUNT = 0x04
-REG_VBUS = 0x05
-REG_DIETEMP = 0x06
-REG_CURRENT = 0x07
-REG_POWER = 0x08          # 24-bit, unsigned
-REG_DIAG_ALRT = 0x0F
-REG_MANUFACTURER_ID = 0x3E   # expected 0x5449 = "TI"
-REG_DEVICE_ID = 0x3F
-
-TI_MANUFACTURER_ID = 0x5449
-
-# LSB sizes. ADCRANGE=0 is the +/-163.84 mV shunt range.
-VBUS_LSB_V = 3.125e-3        # 3.125 mV
-VSHUNT_LSB_V_RANGE0 = 5e-6   # 5 uV
-VSHUNT_LSB_V_RANGE1 = 1.25e-6
-DIETEMP_LSB_C = 125e-3       # 125 m degC
-POWER_LSB_FACTOR = 3.2       # POWER_LSB = 3.2 * CURRENT_LSB
-SHUNT_CAL_FACTOR = 819.2e6   # SHUNT_CAL = 819.2e6 * CURRENT_LSB * R_shunt
-
-
-def _to_signed(value: int, bits: int) -> int:
-    """Interpret an unsigned register value as two's-complement."""
-    sign_bit = 1 << (bits - 1)
-    return value - (1 << bits) if value & sign_bit else value
-
-
-@dataclass
-class Sample:
-    timestamp: float
-    bus_v: float
-    shunt_v: float
-    current_a: float
-    power_w: float
-    temp_c: float
-    raw: dict
-
-
-class INA745B:
-    def __init__(self, bus: str, address: int, shunt_ohms: float,
-                 max_current_a: float, adc_range: int = 0) -> None:
-        try:
-            from periphery import I2C
-        except ImportError as exc:  # pragma: no cover - device-only path
-            raise SystemExit(
-                "python-periphery is required:  pip install python-periphery"
-            ) from exc
-
-        self._I2C = I2C
-        self.i2c = I2C(bus)
-        self.address = address
-        self.shunt_ohms = shunt_ohms
-        self.adc_range = adc_range
-        self.vshunt_lsb = VSHUNT_LSB_V_RANGE1 if adc_range else VSHUNT_LSB_V_RANGE0
-
-        # CURRENT_LSB sets the resolution: full scale is a signed 15-bit count.
-        self.current_lsb = max_current_a / (2 ** 15)
-        self.power_lsb = POWER_LSB_FACTOR * self.current_lsb
-
-    # ---- transport ----------------------------------------------------------
-
-    def _read(self, register: int, length: int = 2) -> int:
-        write = self._I2C.Message([register])
-        read = self._I2C.Message([0] * length, read=True)
-        self.i2c.transfer(self.address, [write, read])
-        value = 0
-        for byte in read.data:
-            value = (value << 8) | byte
-        return value
-
-    def _write(self, register: int, value: int) -> None:
-        payload = [register, (value >> 8) & 0xFF, value & 0xFF]
-        self.i2c.transfer(self.address, [self._I2C.Message(payload)])
-
-    # ---- setup --------------------------------------------------------------
-
-    def identify(self) -> tuple[int, int]:
-        return self._read(REG_MANUFACTURER_ID), self._read(REG_DEVICE_ID)
-
-    def configure(self) -> None:
-        # Reset, then set the shunt calibration and a continuous conversion
-        # mode. 1052us conversions with 16x averaging trades sample rate for a
-        # steadier reading, which suits load profiling.
-        self._write(REG_CONFIG, 0x8000)          # RST
-        time.sleep(0.01)
-        if self.adc_range:
-            self._write(REG_CONFIG, 0x0010)      # ADCRANGE = 1
-
-        shunt_cal = int(SHUNT_CAL_FACTOR * self.current_lsb * self.shunt_ohms)
-        if self.adc_range:
-            shunt_cal *= 4
-        shunt_cal = max(0, min(0xFFFF, shunt_cal))
-        self._write(REG_SHUNT_CAL, shunt_cal)
-
-        # MODE=continuous bus+shunt+temp, VBUSCT/VSHCT/VTCT=1052us, AVG=16
-        self._write(REG_ADC_CONFIG, 0xFB6A)
-        time.sleep(0.05)
-
-    # ---- sampling -----------------------------------------------------------
-
-    def read_sample(self) -> Sample:
-        raw_vbus = self._read(REG_VBUS)
-        raw_vshunt = self._read(REG_VSHUNT)
-        raw_current = self._read(REG_CURRENT)
-        raw_power = self._read(REG_POWER, 3)
-        raw_temp = self._read(REG_DIETEMP)
-
-        return Sample(
-            timestamp=time.time(),
-            bus_v=_to_signed(raw_vbus, 16) * VBUS_LSB_V,
-            shunt_v=_to_signed(raw_vshunt, 16) * self.vshunt_lsb,
-            current_a=_to_signed(raw_current, 16) * self.current_lsb,
-            power_w=raw_power * self.power_lsb,
-            temp_c=_to_signed(raw_temp, 16) * DIETEMP_LSB_C,
-            raw={
-                "vbus": raw_vbus,
-                "vshunt": raw_vshunt,
-                "current": raw_current,
-                "power": raw_power,
-                "dietemp": raw_temp,
-            },
-        )
-
-    def close(self) -> None:
-        try:
-            self.i2c.close()
-        except Exception:
-            pass
+# Single source of truth for the register map, LSB constants and the driver:
+# src/power_monitor.py, which the running app uses too. Keeping one copy means
+# a datasheet correction cannot land in only one of them.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.power_monitor import (  # noqa: E402
+    INA745B,
+    POWER_LSB_FACTOR,
+    SHUNT_CAL_FACTOR,
+    TI_MANUFACTURER_ID,
+    VBUS_LSB_V,
+    to_signed as _to_signed,
+)
 
 
 def scan(bus: str) -> None:

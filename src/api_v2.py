@@ -39,6 +39,7 @@ from src.auth import (
     setup_admin_credentials,
 )
 from src.local_camera_proxy import LocalCameraProxy
+from src.power_monitor import PowerMonitor
 from src.session_store import SessionState, get_session_store
 from src.v2.config import (
     MAX_PROFILE_CENTROID_THRESHOLD,
@@ -242,6 +243,9 @@ app.add_middleware(
 service = ScalableAttendanceService()
 session_store = get_session_store()
 local_camera_proxy = LocalCameraProxy()
+# TEMPORARY TESTING: samples board power draw while the app runs. Reports
+# itself disabled (with a reason) when the monitor chip is absent.
+power_monitor = PowerMonitor()
 
 
 @app.exception_handler(Exception)
@@ -339,11 +343,17 @@ def verify_session_backend() -> None:
         f"single-profile centroid floor={SINGLE_PROFILE_MIN_CENTROID_SCORE:.3f}, "
         f"centroid cap={MAX_PROFILE_CENTROID_THRESHOLD:.3f}"
     )
+    power_monitor.start()
+    if power_monitor.enabled:
+        print("Power monitor active: sampling INA745B board draw.")
+    else:
+        print(f"Power monitor inactive: {power_monitor.reason}")
 
 
 @app.on_event("shutdown")
 def shutdown_local_camera_proxy() -> None:
     local_camera_proxy.stop()
+    power_monitor.stop()
     # Stop the breath pump on uvicorn's graceful shutdown path too, so it is
     # never left running after the service is stopped or restarted.
     try:
@@ -372,6 +382,20 @@ def root() -> Response:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# --- TEMPORARY TESTING: live board power draw --------------------------------
+# Unauthenticated so the readout works in demo mode and can be polled with
+# curl during bring-up. Remove this block when power profiling is finished.
+@app.get("/api/v2/power")
+def power_reading() -> dict:
+    return power_monitor.snapshot()
+
+
+@app.post("/api/v2/power/reset")
+def power_reset() -> dict:
+    power_monitor.reset_statistics()
+    return power_monitor.snapshot()
 
 
 SIMPLE_FRONTEND_INDEX = BASE_DIR / "simple_frontend" / "index.html"

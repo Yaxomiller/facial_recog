@@ -124,6 +124,16 @@
 </head>
 <body>
 
+<!-- TEMPORARY TESTING: live board power draw. Hidden unless the INA745B
+     monitor is present and responding. -->
+<div class="card hidden" id="powerCard" style="padding:8px 12px;margin-bottom:8px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:10px;font-weight:700;letter-spacing:.08em;color:#f3aa2c;text-transform:uppercase;">Power (test)</span>
+    <span class="mono" id="powerNow" style="font-size:15px;font-weight:700;">—</span>
+    <span class="mono muted" id="powerStats" style="margin:0;">&nbsp;</span>
+  </div>
+</div>
+
 <header>
   <h1 id="viewTitle">Attendance</h1>
   <div style="display:flex;gap:8px;align-items:center;">
@@ -724,6 +734,32 @@ el("dbRefreshBtn").addEventListener("click", loadWorkers);
 el("histRefreshBtn").addEventListener("click", loadHistory);
 
 showView("home");
+
+// TEMPORARY TESTING: poll the board power monitor. The card stays hidden
+// unless the INA745B is present, so boards without it are unaffected.
+(function pollPower() {
+  const POLL_MS = 2000;
+  async function tick() {
+    try {
+      const p = await api("/api/v2/power");
+      if (p && p.enabled) {
+        el("powerCard").classList.remove("hidden");
+        el("powerNow").textContent =
+          Number(p.power_mw).toFixed(0) + " mW   " +
+          Number(p.current_ma).toFixed(0) + " mA   " +
+          Number(p.bus_v).toFixed(2) + " V";
+        el("powerStats").textContent =
+          "avg " + Number(p.average_mw).toFixed(0) +
+          "  peak " + Number(p.peak_mw).toFixed(0) +
+          " mW  (" + Number(p.peak_ratio).toFixed(2) + "x)  n=" + p.samples;
+      } else {
+        el("powerCard").classList.add("hidden");
+      }
+    } catch (e) { /* monitor is optional; never disturb the app */ }
+    setTimeout(tick, POLL_MS);
+  }
+  tick();
+})();
 
 // ---------- on-screen keyboard ----------
 (function () {
