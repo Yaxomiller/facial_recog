@@ -8,10 +8,18 @@ without the monitor is unaffected.
 The INA745B is an I2C part (header pins 3/5 = SDA/SCL); it has no SPI
 interface.
 
-VERIFY BEFORE TRUSTING THE SCALED NUMBERS: the register map and LSB constants
-follow TI's 16-bit INA74x/INA23x family and should be confirmed against the
-INA745B datasheet. ATTENDANCE_POWER_SHUNT_OHMS must match the resistor
-actually fitted -- current and power scale linearly with it.
+Register map, LSB sizes and bit fields below are taken from the INA745A/B
+datasheet (SBOSAC3B, revised August 2025), Tables 7-1 and 8-1.
+
+Key property of this part: the shunt is INTEGRATED (800 uOhm kelvin) and the
+device reports current and power already calculated, with FIXED LSB sizes.
+There is no SHUNT_CAL register, no VSHUNT register and no ADCRANGE bit - those
+belong to the external-shunt parts (INA228/237/238). Nothing here needs a
+shunt value or a calibration step.
+
+Grade B (the "B" in INA745B) is the higher-accuracy bin: +/-0.9% current and
++/-1.6% power at full scale, versus +/-1.4% / +/-2.1% for grade A. It changes
+the accuracy specification only - the register map and scaling are identical.
 """
 from __future__ import annotations
 
@@ -22,26 +30,39 @@ import threading
 import time
 from typing import Any, Optional
 
-# --- INA745B register map (16-bit unless noted) ------------------------------
-REG_CONFIG = 0x00
-REG_ADC_CONFIG = 0x01
-REG_SHUNT_CAL = 0x02
-REG_VSHUNT = 0x04
-REG_VBUS = 0x05
-REG_DIETEMP = 0x06
-REG_CURRENT = 0x07
-REG_POWER = 0x08          # 24-bit, unsigned
-REG_MANUFACTURER_ID = 0x3E   # expected 0x5449 = "TI"
-REG_DEVICE_ID = 0x3F
+# --- INA745x register map (datasheet Table 7-1) ------------------------------
+REG_CONFIG = 0x00           # 16-bit
+REG_ADC_CONFIG = 0x01       # 16-bit
+REG_VBUS = 0x05             # 16-bit signed, always positive
+REG_DIETEMP = 0x06          # 12-bit signed in bits 15-4
+REG_CURRENT = 0x07          # 16-bit signed
+REG_POWER = 0x08            # 24-bit unsigned
+REG_ENERGY = 0x09           # 40-bit unsigned accumulator
+REG_CHARGE = 0x0A           # 40-bit unsigned accumulator
+REG_DIAG_ALRT = 0x0B        # 16-bit
+REG_MANUFACTURER_ID = 0x3E  # 16-bit, reset 0x5449 = "TI"
 
 TI_MANUFACTURER_ID = 0x5449
 
-VBUS_LSB_V = 3.125e-3        # 3.125 mV
-VSHUNT_LSB_V_RANGE0 = 5e-6   # 5 uV
-VSHUNT_LSB_V_RANGE1 = 1.25e-6
-DIETEMP_LSB_C = 125e-3       # 125 m degC
-POWER_LSB_FACTOR = 3.2       # POWER_LSB = 3.2 * CURRENT_LSB
-SHUNT_CAL_FACTOR = 819.2e6   # SHUNT_CAL = 819.2e6 * CURRENT_LSB * R_shunt
+# CONFIG bits
+CONFIG_RST = 0x8000         # self-clearing system reset
+CONFIG_RSTACC = 0x4000      # clear ENERGY and CHARGE accumulators
+
+# ADC_CONFIG reset value FB68h = MODE Fh (continuous temperature, current and
+# bus voltage) with 1052us conversion times. That is exactly what continuous
+# profiling wants, so it is written back explicitly after a reset.
+ADC_CONFIG_CONTINUOUS = 0xFB68
+
+# Fixed LSB sizes (datasheet Table 8-1). These are NOT derived from a shunt
+# value or a calibration register on this part.
+VBUS_LSB_V = 3.125e-3       # 3.125 mV/LSB,  full scale 0-40 V
+CURRENT_LSB_A = 1.2e-3      # 1.2 mA/LSB,    full scale +/-39.32 A
+POWER_LSB_W = 240e-6        # 240 uW/LSB,    full scale 4026.53 W
+DIETEMP_LSB_C = 125e-3      # 125 m degC/LSB, 12-bit field
+ENERGY_LSB_J = 3.840e-3     # 3.840 mJ/LSB
+CHARGE_LSB_C = 75e-6        # 75 uC/LSB
+
+INTERNAL_SHUNT_OHMS = 800e-6  # integrated kelvin resistance, for reference
 
 
 def _env(name: str, default: str) -> str:
@@ -58,9 +79,6 @@ def _env_float(name: str, default: float) -> float:
 POWER_MONITOR_ENABLED = _env("ATTENDANCE_POWER_MONITOR", "1").lower() in {"1", "true", "yes", "on"}
 POWER_I2C_BUS = _env("ATTENDANCE_POWER_I2C_BUS", "/dev/i2c-1")
 POWER_I2C_ADDRESS = int(_env("ATTENDANCE_POWER_I2C_ADDRESS", "0x40"), 0)
-POWER_SHUNT_OHMS = _env_float("ATTENDANCE_POWER_SHUNT_OHMS", 0.010)
-POWER_MAX_CURRENT_A = _env_float("ATTENDANCE_POWER_MAX_CURRENT", 5.0)
-POWER_ADC_RANGE = int(_env("ATTENDANCE_POWER_ADC_RANGE", "0"))
 POWER_SAMPLE_INTERVAL = max(0.05, _env_float("ATTENDANCE_POWER_INTERVAL", 0.5))
 
 
@@ -70,11 +88,15 @@ def to_signed(value: int, bits: int) -> int:
     return value - (1 << bits) if value & sign_bit else value
 
 
+def decode_dietemp(raw: int) -> float:
+    """DIETEMP holds a 12-bit signed value in bits 15-4; bits 3-0 read 0."""
+    return to_signed(raw >> 4, 12) * DIETEMP_LSB_C
+
+
 @dataclass(frozen=True)
 class PowerSample:
     timestamp: float
     bus_v: float
-    shunt_v: float
     current_a: float
     power_w: float
     temp_c: float
@@ -86,20 +108,11 @@ class INA745B:
         self,
         bus: str = POWER_I2C_BUS,
         address: int = POWER_I2C_ADDRESS,
-        shunt_ohms: float = POWER_SHUNT_OHMS,
-        max_current_a: float = POWER_MAX_CURRENT_A,
-        adc_range: int = POWER_ADC_RANGE,
         periphery_module: Optional[Any] = None,
     ) -> None:
         self.periphery = periphery_module or importlib.import_module("periphery")
         self.i2c = self.periphery.I2C(bus)
         self.address = address
-        self.shunt_ohms = shunt_ohms
-        self.adc_range = adc_range
-        self.vshunt_lsb = VSHUNT_LSB_V_RANGE1 if adc_range else VSHUNT_LSB_V_RANGE0
-        # CURRENT_LSB sets resolution: full scale is a signed 15-bit count.
-        self.current_lsb = max_current_a / (2 ** 15)
-        self.power_lsb = POWER_LSB_FACTOR * self.current_lsb
 
     def _read(self, register: int, length: int = 2) -> int:
         message = self.periphery.I2C.Message
@@ -116,45 +129,44 @@ class INA745B:
         payload = [register, (value >> 8) & 0xFF, value & 0xFF]
         self.i2c.transfer(self.address, [message(payload)])
 
-    def identify(self) -> tuple[int, int]:
-        return self._read(REG_MANUFACTURER_ID), self._read(REG_DEVICE_ID)
+    def manufacturer_id(self) -> int:
+        return self._read(REG_MANUFACTURER_ID)
 
     def configure(self) -> None:
-        self._write(REG_CONFIG, 0x8000)          # reset
+        """Reset, then select continuous temperature + current + bus voltage."""
+        self._write(REG_CONFIG, CONFIG_RST)
         time.sleep(0.01)
-        if self.adc_range:
-            self._write(REG_CONFIG, 0x0010)      # ADCRANGE = 1
-
-        shunt_cal = int(SHUNT_CAL_FACTOR * self.current_lsb * self.shunt_ohms)
-        if self.adc_range:
-            shunt_cal *= 4
-        self._write(REG_SHUNT_CAL, max(0, min(0xFFFF, shunt_cal)))
-
-        # continuous bus+shunt+temp, 1052us conversions, 16x averaging
-        self._write(REG_ADC_CONFIG, 0xFB6A)
+        self._write(REG_ADC_CONFIG, ADC_CONFIG_CONTINUOUS)
         time.sleep(0.05)
+
+    def reset_accumulators(self) -> None:
+        """Clear the ENERGY and CHARGE accumulators without a full reset."""
+        self._write(REG_CONFIG, CONFIG_RSTACC)
 
     def read_sample(self) -> PowerSample:
         raw_vbus = self._read(REG_VBUS)
-        raw_vshunt = self._read(REG_VSHUNT)
         raw_current = self._read(REG_CURRENT)
         raw_power = self._read(REG_POWER, 3)
         raw_temp = self._read(REG_DIETEMP)
         return PowerSample(
             timestamp=time.time(),
             bus_v=to_signed(raw_vbus, 16) * VBUS_LSB_V,
-            shunt_v=to_signed(raw_vshunt, 16) * self.vshunt_lsb,
-            current_a=to_signed(raw_current, 16) * self.current_lsb,
-            power_w=raw_power * self.power_lsb,
-            temp_c=to_signed(raw_temp, 16) * DIETEMP_LSB_C,
+            current_a=to_signed(raw_current, 16) * CURRENT_LSB_A,
+            power_w=raw_power * POWER_LSB_W,
+            temp_c=decode_dietemp(raw_temp),
             raw={
                 "vbus": raw_vbus,
-                "vshunt": raw_vshunt,
                 "current": raw_current,
                 "power": raw_power,
                 "dietemp": raw_temp,
             },
         )
+
+    def read_energy_joules(self) -> float:
+        return self._read(REG_ENERGY, 5) * ENERGY_LSB_J
+
+    def read_charge_coulombs(self) -> float:
+        return self._read(REG_CHARGE, 5) * CHARGE_LSB_C
 
     def close(self) -> None:
         try:
@@ -190,7 +202,7 @@ class PowerMonitor:
 
         try:
             device = INA745B()
-            manufacturer, _device_id = device.identify()
+            manufacturer = device.manufacturer_id()
             if manufacturer != TI_MANUFACTURER_ID:
                 device.close()
                 self.reason = (
@@ -235,6 +247,12 @@ class PowerMonitor:
             self._peak_w = 0.0
             self._peak_a = 0.0
             self._started_at = time.time()
+        device = self._device
+        if device is not None:
+            try:
+                device.reset_accumulators()
+            except Exception:
+                pass
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -251,7 +269,7 @@ class PowerMonitor:
                 "reason": "",
                 "bus": POWER_I2C_BUS,
                 "address": f"0x{POWER_I2C_ADDRESS:02X}",
-                "shunt_ohms": POWER_SHUNT_OHMS,
+                "internal_shunt_ohms": INTERNAL_SHUNT_OHMS,
                 "bus_v": round(self._latest.bus_v, 4),
                 "current_ma": round(self._latest.current_a * 1000, 2),
                 "power_mw": round(self._latest.power_w * 1000, 2),
