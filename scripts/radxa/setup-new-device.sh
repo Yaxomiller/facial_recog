@@ -37,25 +37,68 @@ fi
 
 echo "==> 1/4  System packages"
 sudo apt-get update
-sudo apt-get install -y \
-    git python3 python3-pip python3-venv python3-dev \
-    chromium-browser \
-    python3-gi python3-gi-cairo gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
-    gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-    gstreamer1.0-plugins-bad gstreamer1.0-libav \
-    libgl1 libglib2.0-0 x11-xserver-utils \
-    || echo "!! some packages failed; check the list above before continuing"
 
-# chromium-browser is a transitional package on some images.
-command -v chromium-browser >/dev/null 2>&1 || sudo apt-get install -y chromium || true
+# Installed one at a time on purpose. A single apt-get call listing every
+# package installs NOTHING if any one of them has no installation candidate
+# (e.g. chromium-browser, a transitional package absent on Debian bookworm),
+# which silently skipped python3-venv and produced a venv with no pip.
+REQUIRED_PACKAGES=(
+    git python3 python3-pip python3-venv python3-dev
+    python3-gi python3-gi-cairo gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0
+    gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+    gstreamer1.0-plugins-bad gstreamer1.0-libav
+    libgl1 libglib2.0-0 x11-xserver-utils
+)
+missing=()
+for package in "${REQUIRED_PACKAGES[@]}"; do
+    if sudo apt-get install -y "$package" >/dev/null 2>&1; then
+        printf '    ok    %s\n' "$package"
+    else
+        printf '    FAIL  %s\n' "$package"
+        missing+=("$package")
+    fi
+done
+
+# A browser is required for the kiosk window. Chromium crashes with SIGILL on
+# the Cubie A5e, so Firefox is installed as the reliable option; whichever is
+# present is picked automatically at launch.
+for browser in firefox-esr firefox chromium; do
+    if command -v "$browser" >/dev/null 2>&1; then
+        printf '    ok    %s (already installed)\n' "$browser"
+        break
+    fi
+    if sudo apt-get install -y "$browser" >/dev/null 2>&1; then
+        printf '    ok    %s\n' "$browser"
+        break
+    fi
+done
+
+if [ ${#missing[@]} -gt 0 ]; then
+    echo
+    echo "!! These packages did not install: ${missing[*]}"
+    echo "   The app may not run correctly without them."
+fi
 
 echo
 echo "==> 2/4  Python environment"
 # --system-site-packages is REQUIRED: the camera talks to GStreamer through
 # the DISTRO's python3-gi bindings, which cannot be pip-installed. An isolated
 # venv builds fine and then fails at runtime with "no module named gi".
+if [ -d .venv ] && ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    # A venv built while python3-venv was missing has no pip and can never
+    # install anything. Rebuild it rather than failing on every install below.
+    echo "    .venv exists but has no pip - rebuilding it"
+    rm -rf .venv
+fi
+
 if [ ! -d .venv ]; then
     python3 -m venv --system-site-packages .venv
+    if ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+        echo "    bootstrapping pip"
+        .venv/bin/python -m ensurepip --upgrade >/dev/null 2>&1 \
+            || curl -sS https://bootstrap.pypa.io/get-pip.py | .venv/bin/python \
+            || { echo "!! could not install pip; run: sudo apt-get install -y python3-venv"; exit 1; }
+    fi
 else
     echo "    .venv already exists (kept)"
 fi
