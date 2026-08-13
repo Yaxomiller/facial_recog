@@ -346,6 +346,10 @@ def verify_session_backend() -> None:
     power_monitor.start()
     if power_monitor.enabled:
         print("Power monitor active: sampling INA745B board draw.")
+        if power_monitor.csv_path:
+            print(f"Power log: {power_monitor.csv_path}")
+        elif power_monitor.csv_error:
+            print(f"Power log unavailable: {power_monitor.csv_error}")
     else:
         print(f"Power monitor inactive: {power_monitor.reason}")
 

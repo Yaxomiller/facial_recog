@@ -30,3 +30,6 @@ frontend/node_modules/
 data/session_store.db
 data/*.db-wal
 data/*.db-shm
+
+# Power-draw log written continuously while the app runs (testing feature).
+data/power_log.csv

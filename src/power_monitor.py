@@ -23,12 +23,15 @@ the accuracy specification only - the register map and scaling are identical.
 """
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import importlib
 import os
+from pathlib import Path
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Optional, TextIO
 
 # --- INA745x register map (datasheet Table 7-1) ------------------------------
 REG_CONFIG = 0x00           # 16-bit
@@ -80,6 +83,21 @@ POWER_MONITOR_ENABLED = _env("ATTENDANCE_POWER_MONITOR", "1").lower() in {"1", "
 POWER_I2C_BUS = _env("ATTENDANCE_POWER_I2C_BUS", "/dev/i2c-1")
 POWER_I2C_ADDRESS = int(_env("ATTENDANCE_POWER_I2C_ADDRESS", "0x40"), 0)
 POWER_SAMPLE_INTERVAL = max(0.05, _env_float("ATTENDANCE_POWER_INTERVAL", 0.5))
+
+# Every sample is appended here while the app runs, so a power profile exists
+# without anyone remembering to start a capture. Set to empty to disable.
+# Relative paths resolve against the repo root.
+POWER_CSV_PATH = _env("ATTENDANCE_POWER_CSV", "data/power_log.csv")
+
+CSV_COLUMNS = [
+    "iso_time",      # UTC, human readable
+    "epoch",         # seconds, for plotting
+    "session_s",     # seconds since this app start; resets each run
+    "bus_v",
+    "current_ma",
+    "power_mw",
+    "temp_c",
+]
 
 
 def to_signed(value: int, bits: int) -> int:
@@ -192,6 +210,68 @@ class PowerMonitor:
         self._started_at = 0.0
         self.enabled = False
         self.reason = "not started"
+        self._csv_handle: Optional[TextIO] = None
+        self._csv_writer = None
+        self.csv_path = ""
+        self.csv_error = ""
+
+    def _open_csv(self) -> None:
+        """Open the log for append. A logging failure must never stop
+        sampling, so problems are recorded and reported, not raised."""
+        if not POWER_CSV_PATH:
+            return
+        try:
+            path = Path(POWER_CSV_PATH)
+            if not path.is_absolute():
+                path = Path(__file__).resolve().parent.parent / path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            is_new = not path.exists() or path.stat().st_size == 0
+            self._csv_handle = path.open("a", newline="", encoding="utf-8")
+            self._csv_writer = csv.writer(self._csv_handle)
+            if is_new:
+                self._csv_writer.writerow(CSV_COLUMNS)
+                self._csv_handle.flush()
+            self.csv_path = str(path)
+        except Exception as exc:
+            self._csv_handle = None
+            self._csv_writer = None
+            self.csv_error = f"{type(exc).__name__}: {exc}"
+
+    def _write_csv_row(self, sample: PowerSample) -> None:
+        if self._csv_writer is None:
+            return
+        try:
+            self._csv_writer.writerow([
+                datetime.fromtimestamp(sample.timestamp, timezone.utc)
+                .isoformat(timespec="milliseconds"),
+                f"{sample.timestamp:.3f}",
+                f"{sample.timestamp - self._started_at:.3f}",
+                f"{sample.bus_v:.4f}",
+                f"{sample.current_a * 1000:.3f}",
+                f"{sample.power_w * 1000:.3f}",
+                f"{sample.temp_c:.2f}",
+            ])
+            # Flushed every sample: the board is powered off abruptly during
+            # power testing, and an unflushed buffer loses the tail of the run.
+            self._csv_handle.flush()
+        except Exception as exc:
+            self.csv_error = f"{type(exc).__name__}: {exc}"
+            self._csv_writer = None
+            try:
+                self._csv_handle.close()
+            except Exception:
+                pass
+            self._csv_handle = None
+
+    def _close_csv(self) -> None:
+        if self._csv_handle is not None:
+            try:
+                self._csv_handle.flush()
+                self._csv_handle.close()
+            except Exception:
+                pass
+        self._csv_handle = None
+        self._csv_writer = None
 
     def start(self) -> None:
         if not POWER_MONITOR_ENABLED:
@@ -220,6 +300,7 @@ class PowerMonitor:
         self._started_at = time.time()
         self.enabled = True
         self.reason = ""
+        self._open_csv()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="power-monitor")
         self._thread.start()
 
@@ -238,6 +319,7 @@ class PowerMonitor:
                 self._total_w += sample.power_w
                 self._peak_w = max(self._peak_w, sample.power_w)
                 self._peak_a = max(self._peak_a, abs(sample.current_a))
+                self._write_csv_row(sample)
             self._stop.wait(POWER_SAMPLE_INTERVAL)
 
     def reset_statistics(self) -> None:
@@ -281,6 +363,8 @@ class PowerMonitor:
                 "peak_ratio": round(self._peak_w / average_w, 2) if average_w > 0 else 0.0,
                 "samples": self._samples,
                 "elapsed_s": round(time.time() - self._started_at, 1),
+                "csv_path": self.csv_path,
+                "csv_error": self.csv_error,
             }
 
     def stop(self) -> None:
@@ -292,4 +376,5 @@ class PowerMonitor:
         if self._device is not None:
             self._device.close()
             self._device = None
+        self._close_csv()
         self.enabled = False
