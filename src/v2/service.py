@@ -48,6 +48,8 @@ from src.v2.index import resolve_index
 from src.v2.schemas import (
     ArchitectureNote,
     AttendanceRow,
+    BreathCheckResult,
+    BreathCheckSessionStartResult,
     BreathTestSessionCancelResult,
     BreathTestSessionStartResult,
     BreathTestResult,
@@ -98,6 +100,9 @@ class PendingBreathSession:
     # Total measurement wall time (purge + baseline + blow). The reading is
     # only ready after this long, so it drives the completion timeout.
     cycle_seconds: float = 0.0
+    # Purge + baseline: how long the UI must hold the subject off before
+    # prompting for the exhale.
+    blow_delay_seconds: float = 0.0
 
 
 @dataclass
@@ -842,11 +847,15 @@ class ScalableAttendanceService:
             cannabis_peak=_event_float(event, "cannabis_peak"),
         )
 
-    def start_breath_test(self, worker_id: int, camera_id: str) -> BreathTestSessionStartResult:
-        worker = repository.fetch_worker(worker_id)
-        if worker is None:
-            raise RuntimeError(f"No worker found for id '{worker_id}'.")
+    # Worker id used for a breath check that has nobody attached to it. The
+    # session machinery is worker-agnostic (BreathAnalyzer.read discards the
+    # id), and no attendance row is ever written for one of these, so the
+    # sentinel never reaches the database.
+    ANONYMOUS_WORKER_ID = 0
 
+    def _start_breath_session(self, worker_id: int, camera_id: str) -> PendingBreathSession:
+        """Create and queue one measurement cycle. Shared by the identified
+        breath test and the anonymous breath check."""
         with self.breath_session_lock:
             self._prune_breath_sessions_locked()
             active_session = self._active_breath_session_locked()
@@ -873,34 +882,48 @@ class ScalableAttendanceService:
             )
             self.breath_sessions[session_id] = session
 
+        # Carried on the session so both callers can build their own result
+        # without re-reading the analyzer.
+        session.blow_delay_seconds = blow_delay_seconds
+        return session
+
+    def start_breath_test(self, worker_id: int, camera_id: str) -> BreathTestSessionStartResult:
+        worker = repository.fetch_worker(worker_id)
+        if worker is None:
+            raise RuntimeError(f"No worker found for id '{worker_id}'.")
+
+        session = self._start_breath_session(worker_id=worker_id, camera_id=camera_id)
         return BreathTestSessionStartResult(
-            session_id=session_id,
+            session_id=session.session_id,
             worker_id=worker_id,
             camera_id=camera_id,
             sample_seconds=max(1.0, session.sample_seconds),
-            started_at=started_at,
-            blow_delay_seconds=blow_delay_seconds,
-            cycle_seconds=cycle_seconds,
+            started_at=session.started_at,
+            blow_delay_seconds=session.blow_delay_seconds,
+            cycle_seconds=session.cycle_seconds,
         )
 
-    def complete_breath_test(self, session_id: str, matched_score: float) -> BreathTestResult:
-        with self.breath_session_lock:
-            session = self.breath_sessions.get(session_id)
-        if session is None:
-            raise RuntimeError("The requested breath test session was not found.")
-        if session.canceled:
-            raise RuntimeError("The breath test session was canceled before completion.")
+    def start_breath_check(self, camera_id: str) -> BreathCheckSessionStartResult:
+        """Start a sensor-only measurement: no identity, nothing recorded."""
+        session = self._start_breath_session(
+            worker_id=self.ANONYMOUS_WORKER_ID, camera_id=camera_id
+        )
+        return BreathCheckSessionStartResult(
+            session_id=session.session_id,
+            sample_seconds=max(1.0, session.sample_seconds),
+            started_at=session.started_at,
+            blow_delay_seconds=session.blow_delay_seconds,
+            cycle_seconds=session.cycle_seconds,
+        )
 
-        worker = repository.fetch_worker(session.worker_id)
-        if worker is None:
-            raise RuntimeError(f"No worker found for id '{session.worker_id}'.")
-
+    def _await_breath_reading(self, session: PendingBreathSession) -> Any:
+        """Block until this session's cycle finishes and return the reading."""
         try:
             # Wait for the whole measurement cycle, not just the blow window:
             # purge + baseline run on the sensor board first, so timing out on
             # sample_seconds alone would discard a perfectly good reading.
             wait_seconds = max(session.cycle_seconds, session.sample_seconds) + 10.0
-            reading = session.future.result(timeout=max(5.0, wait_seconds))
+            return session.future.result(timeout=max(5.0, wait_seconds))
         except FutureTimeoutError as exc:
             raise RuntimeError("The breath sensor is still processing this exhale. Please wait a moment and try again.") from exc
         except Exception as exc:
@@ -908,6 +931,46 @@ class ScalableAttendanceService:
                 session.completed = True
                 self._prune_breath_sessions_locked()
             raise RuntimeError(str(exc)) from exc
+
+    def _lookup_breath_session(self, session_id: str) -> PendingBreathSession:
+        with self.breath_session_lock:
+            session = self.breath_sessions.get(session_id)
+        if session is None:
+            raise RuntimeError("The requested breath test session was not found.")
+        if session.canceled:
+            raise RuntimeError("The breath test session was canceled before completion.")
+        return session
+
+    def complete_breath_check(self, session_id: str) -> BreathCheckResult:
+        """Finish a sensor-only measurement. Deliberately writes nothing: a
+        check with no identified person must not land in the attendance log."""
+        session = self._lookup_breath_session(session_id)
+        reading = self._await_breath_reading(session)
+        with self.breath_session_lock:
+            session.completed = True
+            self._prune_breath_sessions_locked()
+
+        cannabis_ratio = float(getattr(reading, "cannabis_ratio", 0.0))
+        return BreathCheckResult(
+            session_id=session_id,
+            created_at=datetime.utcnow(),
+            alcohol_bac_percent=alcohol_bac_percent(float(reading.alcohol_ppb)),
+            cannabis_confidence=cannabis_confidence_score(cannabis_ratio),
+            alcohol_ppb=float(reading.alcohol_ppb),
+            cannabis_ppb=float(reading.cannabis_ppb),
+            cannabis_ratio=cannabis_ratio,
+            cannabis_upper=float(getattr(reading, "cannabis_upper", 0.0)),
+            cannabis_lower=float(getattr(reading, "cannabis_lower", 0.0)),
+        )
+
+    def complete_breath_test(self, session_id: str, matched_score: float) -> BreathTestResult:
+        session = self._lookup_breath_session(session_id)
+
+        worker = repository.fetch_worker(session.worker_id)
+        if worker is None:
+            raise RuntimeError(f"No worker found for id '{session.worker_id}'.")
+
+        reading = self._await_breath_reading(session)
 
         event = repository.record_screening_event(
             worker_id=session.worker_id,

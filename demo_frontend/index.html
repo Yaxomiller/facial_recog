@@ -66,6 +66,11 @@
   }
   .count { font-size: 11px; color: var(--muted); white-space: nowrap; }
   #homeBtn { padding: 6px 12px; font-size: 13px; }
+  .icon-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 10px; font-size: 12px; white-space: nowrap;
+  }
+  .icon-btn svg { width: 15px; height: 15px; fill: var(--accent); flex: 0 0 auto; }
 
   /* Live board power draw (test build). Hidden unless the INA745B answers,
      so boards without it lose no vertical space at all. */
@@ -278,6 +283,12 @@
   <div class="hdr-right">
     <span class="count" id="homeStats"></span>
     <span class="demo-tag">Demo</span>
+    <!-- Breath-only test: no camera, no identity, nothing recorded. Reachable
+         from every screen, which is why it lives in the header. -->
+    <button class="sec icon-btn" id="breathBtn" title="Breath test only">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h8a3 3 0 1 0-3-3H9a5 5 0 1 1 5 5H6V8Zm0 4h11a4 4 0 1 1-4 4h2a2 2 0 1 0 2-2H6v-2Z"/></svg>
+      Breath
+    </button>
     <button class="sec hidden" id="homeBtn">Home</button>
   </div>
 </header>
@@ -307,7 +318,7 @@
 <!-- SCAN -->
 <div id="viewScan" class="view hidden">
   <div class="status" id="scanStatus">Press Start to scan.</div>
-  <div class="banner hidden" id="sensorBanner"></div>
+  <div class="banner sensor-banner hidden"></div>
 
   <div class="stage">
     <div class="video" id="previewWrap"><img id="preview" alt="Camera preview" crossorigin="anonymous" /></div>
@@ -341,6 +352,31 @@
   </div>
   <div class="row hidden" id="actResult">
     <button id="scanAgainBtn" class="sec">Scan Next Person</button>
+  </div>
+</div>
+
+<!-- BREATH (sensor only: no camera, no identity, nothing recorded) -->
+<div id="viewBreath" class="view hidden">
+  <div class="status" id="breathStatus">Press Exhale to start the breath test.</div>
+  <div class="banner sensor-banner hidden"></div>
+
+  <div class="stage">
+    <div class="readings">
+      <div class="reading">
+        <span class="k">Alcohol</span>
+        <span class="v"><span id="bAlcVal">—</span><i>%</i></span>
+        <span class="u">BAC</span>
+      </div>
+      <div class="reading">
+        <span class="k">Cannabis</span>
+        <span class="v" id="bConfVal">—</span>
+        <span class="u">Confidence score</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="breathExhaleBtn">Exhale</button>
   </div>
 </div>
 
@@ -426,6 +462,7 @@ const el = (id) => document.getElementById(id);
 const VIEWS = {
   home: { node: "viewHome", title: "Attendance" },
   scan: { node: "viewScan", title: "Scan" },
+  breath: { node: "viewBreath", title: "Breath Test" },
   enroll: { node: "viewEnroll", title: "New User" },
   database: { node: "viewDatabase", title: "Database" },
   history: { node: "viewHistory", title: "History" },
@@ -435,6 +472,7 @@ let currentView = "home";
 let scanning = false, scanTimer = null, inFlight = false, faceLocked = false;
 let unrecognizedSince = 0, currentMatch = null, breathSessionId = null;
 let enrollFrames = [], enrollCamOn = false;
+let breathCheckBusy = false;
 
 function setStatus(node, text, tone) {
   node.textContent = text;
@@ -489,13 +527,16 @@ function showView(name) {
   el("viewTitle").textContent = VIEWS[name].title;
   el("homeBtn").classList.toggle("hidden", name === "home");
   el("homeStats").classList.toggle("hidden", name !== "home");
+  // Nothing to jump to when you are already on it, and hiding it mid-test
+  // stops a second session being started under the first one.
+  el("breathBtn").classList.toggle("hidden", name === "breath");
   currentView = name;
 
   if (name !== "scan") stopScan(true);
   if (name !== "enroll") stopEnrollCam();
   if (name === "database") loadWorkers();
   if (name === "history") loadHistory();
-  if (name === "home" || name === "scan") loadStats();
+  if (name === "home" || name === "scan" || name === "breath") loadStats();
 }
 
 // ---------- shared camera helpers ----------
@@ -632,6 +673,27 @@ async function runScan() {
   }
 }
 
+// The sensor board runs PURGE (pump on, sensors warming) and BASELINE
+// (fresh-air zero) before the blow window opens. Prompting for the exhale
+// during those phases would measure air, not breath, so the countdown holds
+// the subject off for blow_delay_seconds first.
+async function runBreathCountdown(session, statusNode, button, blowHint) {
+  const prep = Math.max(0, Math.round(Number(session.blow_delay_seconds) || 0));
+  for (let r = prep; r > 0; r--) {
+    setStatus(statusNode, "Preparing sensor — " + r + "s. Do not blow yet.", "warn");
+    button.textContent = "Wait " + r + "s";
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+
+  const secs = Math.max(1, Math.ceil(Number(session.sample_seconds) || 10));
+  for (let r = secs; r > 0; r--) {
+    setStatus(statusNode, "Exhale now — " + r + "s. " + (blowHint || ""), "warn");
+    button.textContent = "Exhale " + r + "s";
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+  setStatus(statusNode, "Analyzing breath sample…");
+}
+
 async function runExhale() {
   if (!currentMatch || breathSessionId) return;
   el("exhaleBtn").disabled = true;
@@ -641,24 +703,7 @@ async function runExhale() {
       json: { worker_id: currentMatch.worker_id, camera_id: CAMERA_ID },
     });
     breathSessionId = session.session_id;
-
-    // The sensor board runs PURGE (pump on, sensors warming) and BASELINE
-    // (fresh-air zero) before the blow window opens. Prompting for the exhale
-    // during those phases would measure air, not breath.
-    const prep = Math.max(0, Math.round(Number(session.blow_delay_seconds) || 0));
-    for (let r = prep; r > 0; r--) {
-      setStatus(el("scanStatus"), "Preparing sensor — " + r + "s. Do not blow yet.", "warn");
-      el("exhaleBtn").textContent = "Wait " + r + "s";
-      await new Promise((res) => setTimeout(res, 1000));
-    }
-
-    const secs = Math.max(1, Math.ceil(Number(session.sample_seconds) || 10));
-    for (let r = secs; r > 0; r--) {
-      setStatus(el("scanStatus"), "Exhale now — " + r + "s. Keep your face in view.", "warn");
-      el("exhaleBtn").textContent = "Exhale " + r + "s";
-      await new Promise((res) => setTimeout(res, 1000));
-    }
-    setStatus(el("scanStatus"), "Analyzing breath sample…");
+    await runBreathCountdown(session, el("scanStatus"), el("exhaleBtn"), "Keep your face in view.");
     const result = await api("/api/v2/breath-tests/complete", {
       method: "POST",
       json: { session_id: breathSessionId, matched_score: currentMatch.score },
@@ -697,6 +742,58 @@ function resetScanFlow() {
   currentMatch = null; faceLocked = false; unrecognizedSince = 0;
   setScanStage("idle");
   startScan();
+}
+
+// ---------- BREATH CHECK (sensor only) ----------
+// Same measurement cycle as a full scan, but there is no camera, no identity
+// and nothing written to the attendance log -- /api/v2/breath-checks/* is a
+// separate pair of endpoints precisely so a nameless reading can never be
+// mistaken for an attendance record.
+function resetBreathCheck() {
+  el("bAlcVal").textContent = "—";
+  el("bConfVal").textContent = "—";
+  el("breathExhaleBtn").disabled = false;
+  el("breathExhaleBtn").textContent = "Exhale";
+  setStatus(el("breathStatus"), "Press Exhale to start the breath test.");
+}
+
+async function runBreathCheck() {
+  if (breathCheckBusy) return;
+  breathCheckBusy = true;
+  let sessionId = null;
+  const button = el("breathExhaleBtn");
+  button.disabled = true;
+  el("bAlcVal").textContent = "—";
+  el("bConfVal").textContent = "—";
+  try {
+    setStatus(el("breathStatus"), "Starting the sensor…");
+    const session = await api("/api/v2/breath-checks/start", {
+      method: "POST",
+      json: { camera_id: "breath-check" },
+    });
+    sessionId = session.session_id;
+    await runBreathCountdown(session, el("breathStatus"), button, "Blow steadily into the sensor.");
+
+    const result = await api("/api/v2/breath-checks/complete", {
+      method: "POST",
+      json: { session_id: sessionId },
+    });
+    sessionId = null;
+    el("bAlcVal").textContent = fmtBac(result);
+    el("bConfVal").textContent = fmtConfidence(result);
+    setStatus(el("breathStatus"), "Breath test complete.", "ok");
+  } catch (e) {
+    if (sessionId) {
+      // Release the sensor: the backend allows only one session at a time, so
+      // a half-finished one would block the next test and the scan flow too.
+      fetch("/api/v2/breath-tests/" + encodeURIComponent(sessionId), { method: "DELETE" }).catch(() => {});
+    }
+    setStatus(el("breathStatus"), e.message, "err");
+  } finally {
+    breathCheckBusy = false;
+    button.disabled = false;
+    button.textContent = "Exhale";
+  }
 }
 
 // ---------- ENROLL ----------
@@ -928,28 +1025,34 @@ async function loadStats() {
 // this banner that looks like broken hardware.
 function showSensorState(status) {
   const active = String(status.active_breath_analyzer || "");
-  const banner = el("sensorBanner");
+  // One banner per sensor screen (scan and breath), filled identically.
+  const banners = [...document.querySelectorAll(".sensor-banner")];
+  const show = (text) => banners.forEach((b) => {
+    b.textContent = text;
+    b.classList.remove("hidden");
+  });
   if (!active || active === "spi") {
-    banner.classList.add("hidden");
+    banners.forEach((b) => b.classList.add("hidden"));
     return;
   }
   const requested = String(status.requested_breath_analyzer || "");
   if (requested === "mock") {
-    banner.textContent = "Simulated sensor: readings are generated and the pump will not run. "
-      + "Set ATTENDANCE_BREATH_ANALYZER_MODE=spi to use the breath board.";
+    show("Simulated sensor: readings are generated and the pump will not run. "
+      + "Set ATTENDANCE_BREATH_ANALYZER_MODE=spi to use the breath board.");
   } else {
     // The board was asked for but could not be opened. Show the real reason
     // here rather than sending the operator to the journal.
     const reason = (status.warnings || []).find((w) => /breath|spi|pump|sensor/i.test(w));
-    banner.textContent = "Breath board unavailable — simulated readings, pump will not run. "
-      + (reason || "Check the server startup warnings.");
+    show("Breath board unavailable — simulated readings, pump will not run. "
+      + (reason || "Check the server startup warnings."));
   }
-  banner.classList.remove("hidden");
 }
 
 // ---------- wiring ----------
 document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.go)));
 el("homeBtn").addEventListener("click", () => showView("home"));
+el("breathBtn").addEventListener("click", () => { resetBreathCheck(); showView("breath"); });
+el("breathExhaleBtn").addEventListener("click", runBreathCheck);
 el("startBtn").addEventListener("click", startScan);
 el("stopBtn").addEventListener("click", () => stopScan(false));
 el("exhaleBtn").addEventListener("click", runExhale);

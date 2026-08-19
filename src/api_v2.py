@@ -49,6 +49,8 @@ from src.v2.config import (
 from src.v2.schemas import (
     ArchitectureNote,
     AttendanceRow,
+    BreathCheckResult,
+    BreathCheckSessionStartResult,
     BreathTestSessionCancelResult,
     BreathTestSessionStartResult,
     BreathTestResult,
@@ -213,6 +215,15 @@ class BreathTestStartRequest(BaseModel):
 class BreathTestCompleteRequest(BaseModel):
     session_id: str
     matched_score: float
+
+
+class BreathCheckStartRequest(BaseModel):
+    # No worker: a breath check measures the sensor alone.
+    camera_id: str = "breath-check"
+
+
+class BreathCheckCompleteRequest(BaseModel):
+    session_id: str
 
 
 class LocalCameraSessionResponse(BaseModel):
@@ -831,6 +842,30 @@ def complete_breath_test(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/v2/breath-checks/start", response_model=BreathCheckSessionStartResult)
+def start_breath_check(
+    payload: BreathCheckStartRequest,
+    _: SessionState = Depends(require_auth),
+) -> BreathCheckSessionStartResult:
+    """Sensor-only measurement: nobody is identified and nothing is stored."""
+    try:
+        return service.start_breath_check(camera_id=payload.camera_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/v2/breath-checks/complete", response_model=BreathCheckResult)
+def complete_breath_check(
+    payload: BreathCheckCompleteRequest,
+    _: SessionState = Depends(require_auth),
+) -> BreathCheckResult:
+    try:
+        return service.complete_breath_check(session_id=payload.session_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# Cancelling is identical for both kinds -- they share one session store.
 @app.delete("/api/v2/breath-tests/{session_id}", response_model=BreathTestSessionCancelResult)
 def cancel_breath_test(session_id: str, _: SessionState = Depends(require_auth)) -> BreathTestSessionCancelResult:
     try:

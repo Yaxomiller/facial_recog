@@ -116,6 +116,35 @@ class BreathTestSessionCancelResult(BaseModel):
     canceled: bool
 
 
+class BreathCheckSessionStartResult(BaseModel):
+    """A breath measurement with nobody attached to it.
+
+    Same sensor cycle as a breath test, but no worker is identified and no
+    attendance event is written -- it is the sensor on its own, for a quick
+    check from the header button.
+    """
+    session_id: str
+    sample_seconds: float          # the blow window
+    started_at: datetime
+    blow_delay_seconds: float = 0.0
+    cycle_seconds: float = 0.0
+
+
+class BreathCheckResult(BaseModel):
+    session_id: str
+    created_at: datetime
+    # The two operator-facing figures, converted server-side exactly as they
+    # are for a full breath test.
+    alcohol_bac_percent: float = 0.0
+    cannabis_confidence: float = 0.0
+    # Raw measurement, kept for diagnostics; the UI does not display these.
+    alcohol_ppb: float = 0.0
+    cannabis_ppb: float = 0.0
+    cannabis_ratio: float = 0.0
+    cannabis_upper: float = 0.0
+    cannabis_lower: float = 0.0
+
+
 class AttendanceRow(BaseModel):
     id: int
     worker_id: int
