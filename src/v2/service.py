@@ -9,7 +9,11 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
-from src.breath_analyzer import resolve_breath_analyzer
+from src.breath_analyzer import (
+    alcohol_bac_percent,
+    cannabis_confidence_score,
+    resolve_breath_analyzer,
+)
 from src.v2 import repository
 from src.v2.cache import RecognitionCache
 from src.v2.config import (
@@ -622,7 +626,15 @@ class ScalableAttendanceService:
         return [WorkerRead(**dict(row)) for row in repository.list_workers()]
 
     def list_attendance(self, limit: int = DEFAULT_LIST_LIMIT) -> list[AttendanceRow]:
-        return [AttendanceRow(**dict(row)) for row in repository.list_attendance(limit=limit)]
+        rows = []
+        for row in repository.list_attendance(limit=limit):
+            data = dict(row)
+            # Convert here rather than in the browser: the calibration lives on
+            # the server, so every surface reports the same %BAC and score.
+            data["alcohol_bac_percent"] = alcohol_bac_percent(float(data.get("alcohol_ppb") or 0.0))
+            data["cannabis_confidence"] = cannabis_confidence_score(float(data.get("cannabis_ratio") or 0.0))
+            rows.append(AttendanceRow(**data))
+        return rows
 
     def delete_attendance(self, attendance_id: int) -> DeleteAttendanceResult:
         attendance = repository.delete_attendance_event(attendance_id)
@@ -817,6 +829,10 @@ class ScalableAttendanceService:
             overall_clear=bool(event["alcohol_clear"]) and bool(event["cannabis_clear"]),
             attendance_marked=bool(event["attendance_marked"]),
             created_at=event["created_at"],
+            # Converted once here so every surface -- screen, API, history --
+            # shows the same numbers.
+            alcohol_bac_percent=alcohol_bac_percent(float(event["alcohol_ppb"])),
+            cannabis_confidence=cannabis_confidence_score(_event_float(event, "cannabis_ratio")),
             cannabis_ratio=_event_float(event, "cannabis_ratio"),
             cannabis_upper=_event_float(event, "cannabis_upper"),
             cannabis_lower=_event_float(event, "cannabis_lower"),

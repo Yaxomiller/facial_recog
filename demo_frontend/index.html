@@ -5,145 +5,285 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Attendance Demo</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f141c;
+    --panel: #18202c;
+    --panel2: #131a24;
+    --line: #26303f;
+    --text: #e9eef6;
+    --muted: #90a0b8;
+    --accent: #f3aa2c;
+    --blue: #2f7bef;
+    --gap: 8px;
+    --osk-h: 0px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  /* The shell fills the screen exactly. `body` is a fixed-height flex column
+     with overflow hidden, so the PAGE can never scroll; each view sizes its
+     own parts to the space left over. Only a genuinely unbounded list (the
+     database and history tables) gets its own internal scroller. */
+  html, body { height: 100%; }
   body {
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: #0f141c;
-    color: #e9eef6;
-    min-height: 100vh;
-    padding: 10px 10px 14px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+    padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
     touch-action: pan-x pan-y;
     overscroll-behavior: none;
     -webkit-user-select: none;
     user-select: none;
   }
+
+  /* Every view fills the space under the header and never scrolls itself. */
+  .view {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--gap);
+  }
+  .hidden { display: none !important; }
   input { -webkit-user-select: text; user-select: text; }
 
+  /* ---------- header ---------- */
   header {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; margin-bottom: 10px;
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
   }
-  header h1 { font-size: 17px; font-weight: 700; letter-spacing: 0.3px; }
+  header h1 { font-size: clamp(15px, 2.6vh, 21px); font-weight: 700; letter-spacing: 0.3px; }
+  .hdr-right { display: flex; align-items: center; gap: 8px; }
   .demo-tag {
     font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #0f141c; background: #f3aa2c;
+    text-transform: uppercase; color: #0f141c; background: var(--accent);
     padding: 3px 7px; border-radius: 999px;
   }
+  .count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  #homeBtn { padding: 6px 12px; font-size: 13px; }
 
-  .card {
-    background: #18202c; border: 1px solid #26303f; border-radius: 10px;
-    padding: 12px; margin-bottom: 10px;
+  /* Live board power draw (test build). Hidden unless the INA745B answers,
+     so boards without it lose no vertical space at all. */
+  .powerbar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 5px 10px;
   }
+  .powerbar b { font-size: 10px; font-weight: 700; letter-spacing: .08em; color: var(--accent); text-transform: uppercase; }
+  .powerbar span { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .powerbar .dim { color: var(--muted); font-size: 10px; }
 
-  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  /* ---------- home tiles ---------- */
+  .tiles {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: var(--gap);
+  }
   .tile {
-    background: #18202c; border: 1px solid #26303f; border-radius: 12px;
-    padding: 20px 12px; color: #e9eef6; text-align: center; cursor: pointer;
-    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    color: var(--text); text-align: center; cursor: pointer; font-family: inherit;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: clamp(4px, 1.2vh, 12px); padding: clamp(6px, 1.5vh, 18px);
+    min-width: 0; min-height: 0;
   }
   .tile:active { background: #212c3b; }
-  .tile svg { width: 30px; height: 30px; fill: #f3aa2c; }
-  .tile strong { font-size: 15px; }
-  .tile span { font-size: 11px; color: #90a0b8; line-height: 1.3; }
-
-  label { display: block; font-size: 12px; color: #9fb0c7; margin: 8px 0 4px; }
-  input {
-    width: 100%; padding: 10px; border-radius: 6px; border: 1px solid #33405a;
-    background: #0f141c; color: #e9eef6; font-size: 15px;
+  .tile svg {
+    flex: 0 0 auto;
+    width: clamp(34px, 11vh, 88px); height: clamp(34px, 11vh, 88px);
+    fill: var(--accent);
   }
-  button {
-    padding: 12px; border: 0; border-radius: 7px; background: #2f7bef;
-    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
-  }
-  button:disabled { background: #2c3646; color: #6d7a90; }
-  button.sec { background: #26303f; }
-  button.danger { background: #a83c37; }
-  button.block { width: 100%; margin-top: 10px; }
-  .row { display: flex; gap: 8px; margin-top: 10px; }
-  .row button { flex: 1; }
+  .tile strong { font-size: clamp(16px, 3.3vh, 32px); line-height: 1.1; }
+  .tile span { font-size: clamp(10px, 1.7vh, 16px); color: var(--muted); line-height: 1.25; }
 
+  /* ---------- shared pieces ---------- */
   .status {
-    padding: 10px; border-radius: 7px; background: #223049;
-    font-size: 13px; line-height: 1.4; min-height: 40px;
-    display: flex; align-items: center;
+    flex: 0 0 auto;
+    padding: 9px 11px; border-radius: 8px; background: #223049;
+    font-size: clamp(12px, 1.9vh, 15px); line-height: 1.3;
   }
   .status.ok { background: #17402a; color: #9fe2b5; }
   .status.warn { background: #45351c; color: #f2c68b; }
   .status.err { background: #45222a; color: #f2a19b; }
-
-  .video { width: 100%; background: #000; border-radius: 8px; overflow: hidden; margin-top: 10px; }
-  .video img { width: 100%; display: block; min-height: 180px; object-fit: contain; }
-
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { text-align: left; padding: 7px 4px; border-bottom: 1px solid #26303f; }
-  th { color: #9fb0c7; font-weight: 600; }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-  .pill.pass { background: #17402a; color: #9fe2b5; }
-  .pill.fail { background: #45222a; color: #f2a19b; }
-
-  .readings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-  .reading {
-    background: #0f141c; border: 1px solid #26303f; border-radius: 9px;
-    padding: 12px; text-align: center;
+  .banner {
+    flex: 0 0 auto;
+    padding: 7px 10px; border-radius: 7px;
+    background: #45351c; color: #f2c68b; font-size: 11px; line-height: 1.3;
   }
-  .reading span { font-size: 11px; color: #90a0b8; text-transform: uppercase; letter-spacing: 0.06em; }
-  .reading strong { display: block; font-size: 19px; margin: 6px 0 8px; }
-  .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .thumb { position: relative; width: 56px; height: 56px; }
-  .thumb img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid #33405a; display: block; }
-  .thumb-del {
+
+  button {
+    padding: clamp(9px, 1.8vh, 15px); border: 0; border-radius: 9px;
+    background: var(--blue); color: #fff; font-family: inherit;
+    font-size: clamp(13px, 2.1vh, 18px); font-weight: 600; cursor: pointer;
+  }
+  button:disabled { background: #2c3646; color: #6d7a90; }
+  button.sec { background: #26303f; }
+  button.danger { background: #a83c37; }
+  .row { flex: 0 0 auto; display: flex; gap: var(--gap); }
+  .row button { flex: 1 1 0; min-width: 0; }
+
+  /* The flexible middle of a view: camera preview or the reading cards. */
+  .stage { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .video {
+    flex: 1 1 auto; min-height: 0;
+    background: #000; border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; display: flex; align-items: center; justify-content: center;
+  }
+  .video img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+  /* ---------- breath readings ---------- */
+  .readings {
+    flex: 1 1 auto; min-height: 0;
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap);
+  }
+  .reading {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: clamp(3px, 0.8vh, 8px); padding: 10px; min-width: 0; text-align: center;
+  }
+  .reading .k {
+    font-size: clamp(10px, 1.6vh, 14px); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.07em;
+  }
+  .reading .v {
+    font-size: clamp(24px, 6.4vh, 58px); font-weight: 700; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .reading .v i { font-style: normal; font-size: 0.45em; color: var(--muted); margin-left: 3px; }
+  .reading .u {
+    font-size: clamp(9px, 1.5vh, 12px); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+
+  .infobar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 11px; min-width: 0;
+  }
+  .infobar b { font-size: clamp(13px, 2.1vh, 18px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .infobar span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .chip {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    font-size: clamp(10px, 1.6vh, 12px); font-weight: 600;
+    background: #26303f; color: var(--muted);
+  }
+  .chip.on { background: #1d3350; color: #9dc4ff; }
+
+  /* ---------- enroll ---------- */
+  .fields { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+  .fields label {
+    display: block; font-size: 10px; color: var(--muted); margin-bottom: 3px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .fields input {
+    width: 100%; padding: clamp(7px, 1.5vh, 12px) 10px; border-radius: 7px;
+    border: 1px solid #33405a; background: #0b1017; color: var(--text);
+    font-family: inherit; font-size: clamp(13px, 2vh, 16px);
+  }
+  /* Three fixed slots, so the row's height never changes as photos come and go. */
+  .thumbs { flex: 0 0 auto; display: flex; gap: var(--gap); height: clamp(44px, 8.5vh, 76px); }
+  .slot {
+    position: relative; flex: 0 0 auto;
+    width: clamp(44px, 8.5vh, 76px); height: 100%;
+    border-radius: 8px; border: 1px dashed #33405a; background: var(--panel2);
+    display: flex; align-items: center; justify-content: center;
+    color: #4d5b74; font-size: 14px; font-weight: 700;
+  }
+  .slot.filled { border-style: solid; }
+  .slot img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; display: block; }
+  .slot-del {
     position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
     padding: 0; border-radius: 50%; background: #a83c37; color: #fff;
     font-size: 13px; font-weight: 700; line-height: 1;
     display: flex; align-items: center; justify-content: center;
   }
-  .hidden { display: none !important; }
-  .muted { color: #7f8da3; font-size: 11px; margin-top: 8px; }
 
-  /* On-screen keyboard */
+  /* ---------- tables ---------- */
+  .tablewrap {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: clamp(10px, 1.7vh, 13px); }
+  thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--panel); color: var(--muted); font-weight: 600; text-align: left;
+    padding: 8px 6px; border-bottom: 1px solid var(--line);
+    font-size: clamp(9px, 1.5vh, 11px); text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  tbody td { padding: 7px 6px; border-bottom: 1px solid #1e2733; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.act, th.act { text-align: right; width: 1%; white-space: nowrap; }
+  .mini { padding: 4px 9px; font-size: 11px; border-radius: 6px; }
+
+  /* ---------- on-screen keyboard ---------- */
   .osk {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000;
     display: flex; flex-direction: column; gap: 5px;
-    padding: 7px 5px calc(7px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 5px calc(6px + env(safe-area-inset-bottom, 0px));
     background: rgba(8, 11, 16, 0.98);
     box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
   }
   .osk-row { display: flex; gap: 5px; justify-content: center; }
   .osk-key {
-    flex: 1 1 0; min-width: 0; height: 46px; border-radius: 7px;
-    background: #2b3547; color: #f2f5fa; font-size: 16px; font-weight: 600;
+    flex: 1 1 0; min-width: 0; height: clamp(32px, 6.2vh, 46px); border-radius: 7px;
+    background: #2b3547; color: #f2f5fa; font-size: clamp(13px, 2.2vh, 16px); font-weight: 600;
     display: flex; align-items: center; justify-content: center;
-    touch-action: manipulation;
+    touch-action: manipulation; padding: 0;
   }
   .osk-key:active { background: #3d4a63; }
   .osk-key[data-k="space"] { flex: 4 1 0; }
   .osk-key[data-k="shift"], .osk-key[data-k="backspace"],
-  .osk-key[data-k="symbols"], .osk-key[data-k="abc"] { flex: 1.5 1 0; background: #1f2734; font-size: 14px; }
-  .osk-key[data-k="done"] { flex: 1.6 1 0; background: #2f7bef; }
+  .osk-key[data-k="symbols"], .osk-key[data-k="abc"] { flex: 1.5 1 0; background: #1f2734; font-size: 13px; }
+  .osk-key[data-k="done"] { flex: 1.6 1 0; background: var(--blue); }
+
+  /* While the keyboard is up it covers the bottom of the screen. Reserve that
+     height and drop the camera preview so the fields being typed into stay
+     visible -- without this the only way to reach them would be scrolling. */
+  body.osk-open .view { padding-bottom: var(--osk-h); }
+  body.osk-open #enrollMedia, body.osk-open #enrollCamRow, body.osk-open #thumbs { display: none !important; }
+
+  /* On a very short screen a full-size keyboard would push the fields off the
+     bottom. Tighten the keys and drop the hint line so what is being typed
+     into stays on screen instead of needing a scroll. */
+  @media (max-height: 430px) {
+    .osk-key { height: clamp(26px, 6.2vh, 46px); }
+    body.osk-open #enrollStatus { display: none; }
+    body.osk-open .fields input { padding: 6px 9px; }
+  }
 </style>
 </head>
 <body>
 
 <!-- TEMPORARY TESTING: live board power draw. Hidden unless the INA745B
      monitor is present and responding. -->
-<div class="card hidden" id="powerCard" style="padding:8px 12px;margin-bottom:8px;">
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
-    <span style="font-size:10px;font-weight:700;letter-spacing:.08em;color:#f3aa2c;text-transform:uppercase;">Power (test)</span>
-    <span class="mono" id="powerNow" style="font-size:15px;font-weight:700;">—</span>
-    <span class="mono muted" id="powerStats" style="margin:0;">&nbsp;</span>
-  </div>
+<div class="powerbar hidden" id="powerCard">
+  <b>Power (test)</b>
+  <span id="powerNow">&mdash;</span>
+  <span class="dim" id="powerStats">&nbsp;</span>
 </div>
 
 <header>
   <h1 id="viewTitle">Attendance</h1>
-  <div style="display:flex;gap:8px;align-items:center;">
+  <div class="hdr-right">
+    <span class="count" id="homeStats"></span>
     <span class="demo-tag">Demo</span>
-    <button class="sec hidden" id="homeBtn" style="padding:7px 12px;font-size:13px;">Home</button>
+    <button class="sec hidden" id="homeBtn">Home</button>
   </div>
 </header>
 
 <!-- HOME -->
-<div id="viewHome">
+<div id="viewHome" class="view">
   <div class="tiles">
     <button class="tile" data-go="enroll">
       <svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 1 0 6a3 3 0 0 1 0-6Zm0 8c3.3 0 6 1.8 6 4v2H6v-2c0-2.2 2.7-4 6-4Zm7-8v3h3v2h-3v3h-2v-3h-3V8h3V5h2Z"/></svg>
@@ -159,90 +299,100 @@
     </button>
     <button class="tile" data-go="history">
       <svg viewBox="0 0 24 24"><path d="M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm1 4v2h8V8H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"/></svg>
-      <strong>Attendance History</strong><span>Breath &amp; attendance records</span>
+      <strong>History</strong><span>Breath &amp; attendance records</span>
     </button>
   </div>
-  <div class="muted" id="homeStats">&nbsp;</div>
 </div>
 
 <!-- SCAN -->
-<div id="viewScan" class="hidden">
-  <div class="card">
-    <div class="status warn hidden" id="sensorBanner"></div>
-    <div class="status" id="scanStatus">Press Start to scan.</div>
-    <div class="video"><img id="preview" alt="Camera preview" crossorigin="anonymous" /></div>
-    <div class="row">
-      <button id="startBtn">Start</button>
-      <button id="stopBtn" class="sec">Stop</button>
+<div id="viewScan" class="view hidden">
+  <div class="status" id="scanStatus">Press Start to scan.</div>
+  <div class="banner hidden" id="sensorBanner"></div>
+
+  <div class="stage">
+    <div class="video" id="previewWrap"><img id="preview" alt="Camera preview" crossorigin="anonymous" /></div>
+    <div class="readings hidden" id="resultCard">
+      <div class="reading">
+        <span class="k">Alcohol</span>
+        <span class="v"><span id="alcVal">0.000</span><i>%</i></span>
+        <span class="u">BAC</span>
+      </div>
+      <div class="reading">
+        <span class="k">Cannabis</span>
+        <span class="v" id="confVal">0.000</span>
+        <span class="u">Confidence score</span>
+      </div>
     </div>
   </div>
 
-  <div class="card hidden" id="matchCard">
-    <strong id="matchName" style="font-size:17px;"></strong>
-    <div class="muted" id="matchMeta"></div>
-    <button class="block" id="exhaleBtn">Exhale</button>
+  <div class="infobar hidden" id="matchCard">
+    <b id="matchName"></b><span id="matchMeta"></span>
+  </div>
+  <div class="infobar hidden" id="attBar">
+    <b id="attName">Attendance</b><span class="chip" id="attChip">&mdash;</span>
   </div>
 
-  <div class="card hidden" id="resultCard">
-    <div style="font-size:13px;color:#9fb0c7;">Breath Test Result</div>
-    <div class="readings" style="grid-template-columns:1fr 1fr;">
-      <div class="reading">
-        <span>Alcohol</span>
-        <strong id="alcVal">—</strong>
-      </div>
-      <div class="reading">
-        <span>Cannabis Conformity</span>
-        <strong id="confVal">—</strong>
-      </div>
-    </div>
-    <div style="margin-top:10px;text-align:center;">
-      Attendance: <span class="pill" id="attPill">—</span>
-    </div>
-    <button class="block sec" id="scanAgainBtn">Scan Next Person</button>
+  <div class="row" id="actIdle">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" class="sec">Stop</button>
+  </div>
+  <div class="row hidden" id="actMatch">
+    <button id="exhaleBtn">Exhale</button>
+  </div>
+  <div class="row hidden" id="actResult">
+    <button id="scanAgainBtn" class="sec">Scan Next Person</button>
   </div>
 </div>
 
 <!-- ENROLL -->
-<div id="viewEnroll" class="hidden">
-  <div class="card">
-    <div class="status" id="enrollStatus">Enter details, then capture 3 photos.</div>
-    <label for="empCode">Employee ID</label>
-    <input id="empCode" placeholder="e.g. EMP001" />
-    <label for="empName">Full Name</label>
-    <input id="empName" placeholder="e.g. Ravi Kumar" />
-    <div class="video"><img id="enrollPreview" alt="Camera preview" crossorigin="anonymous" /></div>
-    <div class="row">
-      <button id="enrollCamBtn">Start Camera</button>
-      <button id="captureBtn" class="sec" disabled>Capture</button>
+<div id="viewEnroll" class="view hidden">
+  <div class="status" id="enrollStatus">Enter details, then capture 3 photos.</div>
+  <div class="fields">
+    <div>
+      <label for="empCode">Employee ID</label>
+      <input id="empCode" placeholder="EMP001" />
     </div>
-    <div class="thumbs" id="thumbs"></div>
-    <button class="block sec hidden" id="clearPhotosBtn">Clear All Photos</button>
-    <button class="block" id="saveUserBtn" disabled>Need 3 Photos</button>
+    <div>
+      <label for="empName">Full Name</label>
+      <input id="empName" placeholder="Ravi Kumar" />
+    </div>
+  </div>
+  <div class="stage" id="enrollMedia">
+    <div class="video"><img id="enrollPreview" alt="Camera preview" crossorigin="anonymous" /></div>
+  </div>
+  <div class="thumbs" id="thumbs"></div>
+  <div class="row" id="enrollCamRow">
+    <button id="enrollCamBtn">Start Camera</button>
+    <button id="captureBtn" class="sec" disabled>Capture</button>
+  </div>
+  <div class="row">
+    <button id="clearPhotosBtn" class="sec" disabled>Clear Photos</button>
+    <button id="saveUserBtn" disabled>Need 3 Photos</button>
   </div>
 </div>
 
 <!-- DATABASE -->
-<div id="viewDatabase" class="hidden">
-  <div class="card">
-    <div class="status" id="dbStatus">Registered employees.</div>
+<div id="viewDatabase" class="view hidden">
+  <div class="status" id="dbStatus">Registered employees.</div>
+  <div class="tablewrap">
     <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Added</th><th></th></tr></thead>
-      <tbody id="dbBody"><tr><td colspan="4">Loading…</td></tr></tbody>
+      <thead><tr><th>ID</th><th>Name</th><th>Added</th><th class="act"></th></tr></thead>
+      <tbody id="dbBody"><tr><td colspan="4">Loading&hellip;</td></tr></tbody>
     </table>
-    <button class="block sec" id="dbRefreshBtn">Refresh</button>
   </div>
+  <div class="row"><button class="sec" id="dbRefreshBtn">Refresh</button></div>
 </div>
 
 <!-- HISTORY -->
-<div id="viewHistory" class="hidden">
-  <div class="card">
-    <div class="status" id="histStatus">Recent attendance records.</div>
+<div id="viewHistory" class="view hidden">
+  <div class="status" id="histStatus">Recent attendance records.</div>
+  <div class="tablewrap">
     <table>
-      <thead><tr><th>Name</th><th>Time</th><th>Alcohol</th><th>Cannabis</th><th>U/L</th><th>Att.</th><th></th></tr></thead>
-      <tbody id="histBody"><tr><td colspan="7">Loading…</td></tr></tbody>
+      <thead><tr><th>Name</th><th>Time</th><th class="num">BAC&nbsp;%</th><th class="num">Conf.</th><th>Att.</th><th class="act"></th></tr></thead>
+      <tbody id="histBody"><tr><td colspan="6">Loading&hellip;</td></tr></tbody>
     </table>
-    <button class="block sec" id="histRefreshBtn">Refresh</button>
   </div>
+  <div class="row"><button class="sec" id="histRefreshBtn">Refresh</button></div>
 </div>
 
 <canvas id="capture" class="hidden"></canvas>
@@ -250,9 +400,9 @@
 <script>
 "use strict";
 
-// When true the breath readings always display clean placeholders
-// ("0 BAC" / "Not present") regardless of sensor values. Set to true for a
-// scripted demo; false shows the real values measured by the sensor board.
+// When true the breath readings always display clean placeholders (0.000 BAC
+// and a 0.000 confidence score) regardless of what the sensor measured. Set
+// to true for a scripted demo; false shows the real values.
 const DEMO_PLACEHOLDER_READINGS = false;
 
 const CAMERA_ID = "demo-front-camera";
@@ -261,6 +411,16 @@ const SCAN_DELAY_MS = 300;
 // matters a lot on a 1GB board. Recognition quality is unaffected at this size.
 const FRAME_WIDTH = 640;
 const UNRECOGNIZED_MS = 12000;
+const REQUIRED_PHOTOS = 3;
+
+// Display calibration, mirroring src/v2/config.py. The server sends the
+// converted figures (alcohol_bac_percent / cannabis_confidence) and those are
+// always preferred; these constants only cover a record stored before the
+// backend computed them, so the screen never falls back to raw mV*s.
+const BAC_ZERO_READING = 30;      // raw integral that means 0.00 %BAC
+const BAC_REF_READING = 1500;     // raw integral that means BAC_REF_PERCENT
+const BAC_REF_PERCENT = 0.2;
+const CANNABIS_UL_THRESHOLD = 500;  // upper/lower ratio that scores 1.000
 
 const el = (id) => document.getElementById(id);
 const VIEWS = {
@@ -268,7 +428,7 @@ const VIEWS = {
   scan: { node: "viewScan", title: "Scan" },
   enroll: { node: "viewEnroll", title: "New User" },
   database: { node: "viewDatabase", title: "Database" },
-  history: { node: "viewHistory", title: "Attendance History" },
+  history: { node: "viewHistory", title: "History" },
 };
 
 let currentView = "home";
@@ -294,11 +454,41 @@ async function api(path, opts) {
   return data;
 }
 
+/* ---------- reported figures ----------
+   Alcohol reports %BAC and cannabis reports a 0-1 confidence score. The raw
+   mV*s integrals and the raw upper/lower ratio are never shown. */
+
+// %BAC from the raw alcohol integral: a straight line through the two
+// calibration points. Anything at or below the sober reading is baseline
+// noise, not negative alcohol, so it reports 0.000.
+function bacPercent(row) {
+  const given = Number(row && row.alcohol_bac_percent);
+  if (Number.isFinite(given)) return Math.max(0, given);
+  const span = BAC_REF_READING - BAC_ZERO_READING;
+  if (span <= 0) return 0;
+  const raw = Number(row && row.alcohol_ppb) || 0;
+  return Math.max(0, (raw - BAC_ZERO_READING) * BAC_REF_PERCENT / span);
+}
+
+// The cannabis upper/lower area ratio normalised against its calibration
+// threshold, so the score always reads between 0.000 and 1.000.
+function confidenceScore(row) {
+  const given = Number(row && row.cannabis_confidence);
+  if (Number.isFinite(given)) return Math.min(1, Math.max(0, given));
+  if (CANNABIS_UL_THRESHOLD <= 0) return 0;
+  const ratio = Number(row && row.cannabis_ratio) || 0;
+  return Math.min(1, Math.max(0, ratio / CANNABIS_UL_THRESHOLD));
+}
+
+function fmtBac(row) { return (DEMO_PLACEHOLDER_READINGS ? 0 : bacPercent(row)).toFixed(3); }
+function fmtConfidence(row) { return (DEMO_PLACEHOLDER_READINGS ? 0 : confidenceScore(row)).toFixed(3); }
+
 function showView(name) {
   Object.keys(VIEWS).forEach((key) => el(VIEWS[key].node).classList.add("hidden"));
   el(VIEWS[name].node).classList.remove("hidden");
   el("viewTitle").textContent = VIEWS[name].title;
   el("homeBtn").classList.toggle("hidden", name === "home");
+  el("homeStats").classList.toggle("hidden", name !== "home");
   currentView = name;
 
   if (name !== "scan") stopScan(true);
@@ -324,6 +514,19 @@ function grabFrame(imgEl, quality) {
 }
 
 // ---------- SCAN ----------
+// The scan view swaps between three stages in place. Each stage shows exactly
+// one info bar and one button row, so the layout height never changes and the
+// view always fits the screen.
+function setScanStage(stage) {
+  el("previewWrap").classList.toggle("hidden", stage === "result");
+  el("resultCard").classList.toggle("hidden", stage !== "result");
+  el("matchCard").classList.toggle("hidden", stage !== "match");
+  el("attBar").classList.toggle("hidden", stage !== "result");
+  el("actIdle").classList.toggle("hidden", stage !== "idle");
+  el("actMatch").classList.toggle("hidden", stage !== "match");
+  el("actResult").classList.toggle("hidden", stage !== "result");
+}
+
 function coachMessage(reason) {
   const t = String(reason || "").toLowerCase();
   if (!t || t.indexOf("pending") >= 0 || t.indexOf("waiting") >= 0) return "Verifying identity. Hold still.";
@@ -337,8 +540,7 @@ function coachMessage(reason) {
 async function startScan() {
   if (scanning) return;
   scanning = true; faceLocked = false; unrecognizedSince = 0; currentMatch = null;
-  el("matchCard").classList.add("hidden");
-  el("resultCard").classList.add("hidden");
+  setScanStage("idle");
   el("startBtn").disabled = true;
   setStatus(el("scanStatus"), "Starting camera…");
   try {
@@ -393,10 +595,13 @@ async function runScan() {
       unrecognizedSince = 0;
       setStatus(el("scanStatus"), currentMatch.name + " identified.", "ok");
       el("matchName").textContent = currentMatch.name;
-      el("matchMeta").textContent = "ID " + currentMatch.employee_code + " · confidence " + Number(currentMatch.score).toFixed(3);
-      el("matchCard").classList.remove("hidden");
+      // Spelled out as a FACE MATCH score so it is never mistaken for the
+      // cannabis confidence score shown on the result screen.
+      el("matchMeta").textContent = "ID " + currentMatch.employee_code
+        + " · face match " + Number(currentMatch.score).toFixed(2);
       el("exhaleBtn").disabled = false;
       el("exhaleBtn").textContent = "Exhale";
+      setScanStage("match");
       return;
     }
 
@@ -472,17 +677,17 @@ async function runExhale() {
   }
 }
 
+// The screen reports the two operator-facing figures the backend derived from
+// the exhale -- %BAC and the cannabis confidence score. No raw units and no
+// pass/fail verdict; whether attendance was marked is the only status shown.
 function showBreathResult(result) {
-  // Fixed presentation values: the screen reports "No" alcohol and a 0%
-  // cannabis conformity instead of the measured numbers. The real readings
-  // are still measured, limit-checked and stored - only the display is fixed.
-  el("alcVal").textContent = "No";
-  el("confVal").textContent = "0%";
+  el("alcVal").textContent = fmtBac(result);
+  el("confVal").textContent = fmtConfidence(result);
 
-  el("attPill").textContent = result.attendance_marked ? "Marked" : "Not Marked";
-  el("attPill").className = "pill " + (result.attendance_marked ? "pass" : "fail");
-  el("matchCard").classList.add("hidden");
-  el("resultCard").classList.remove("hidden");
+  el("attName").textContent = result.name || "Attendance";
+  el("attChip").textContent = result.attendance_marked ? "Attendance marked" : "Not marked";
+  el("attChip").className = "chip" + (result.attendance_marked ? " on" : "");
+  setScanStage("result");
 
   if (result.attendance_marked) setStatus(el("scanStatus"), result.name + " — attendance marked.", "ok");
   else setStatus(el("scanStatus"), result.name + " — attendance not marked (already marked recently).", "warn");
@@ -490,8 +695,7 @@ function showBreathResult(result) {
 
 function resetScanFlow() {
   currentMatch = null; faceLocked = false; unrecognizedSince = 0;
-  el("matchCard").classList.add("hidden");
-  el("resultCard").classList.add("hidden");
+  setScanStage("idle");
   startScan();
 }
 
@@ -517,6 +721,10 @@ function stopEnrollCam() {
 }
 
 async function capturePhoto() {
+  if (enrollFrames.length >= REQUIRED_PHOTOS) {
+    setStatus(el("enrollStatus"), "All 3 photos captured. Delete one to retake it.", "warn");
+    return;
+  }
   const blob = await grabFrame(el("enrollPreview"), 0.9);
   if (!blob) { setStatus(el("enrollStatus"), "Camera frame not ready yet.", "warn"); return; }
   enrollFrames.push(blob);
@@ -525,27 +733,35 @@ async function capturePhoto() {
   setStatus(el("enrollStatus"), "Photo " + enrollFrames.length + " of 3 captured. " + (hints[enrollFrames.length - 1] || ""));
 }
 
+// Always three slots: the row keeps a constant height, so capturing or
+// deleting a photo never reflows the rest of the view.
 function renderThumbs() {
   const box = el("thumbs");
   // Revoke previous object URLs before rebuilding: without this every
   // recapture leaks a full JPEG in browser memory, which matters on a 1GB board.
   [...box.querySelectorAll("img")].forEach((img) => URL.revokeObjectURL(img.src));
   box.innerHTML = "";
-  enrollFrames.forEach((blob, index) => {
-    const wrap = document.createElement("div");
-    wrap.className = "thumb";
-    const img = document.createElement("img");
-    img.src = URL.createObjectURL(blob);
-    const del = document.createElement("button");
-    del.className = "thumb-del";
-    del.type = "button";
-    del.textContent = "×";
-    del.title = "Delete this photo";
-    del.addEventListener("click", () => removePhoto(index));
-    wrap.appendChild(img);
-    wrap.appendChild(del);
-    box.appendChild(wrap);
-  });
+  for (let index = 0; index < REQUIRED_PHOTOS; index++) {
+    const slot = document.createElement("div");
+    slot.className = "slot";
+    const blob = enrollFrames[index];
+    if (!blob) {
+      slot.textContent = String(index + 1);
+    } else {
+      slot.classList.add("filled");
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(blob);
+      const del = document.createElement("button");
+      del.className = "slot-del";
+      del.type = "button";
+      del.textContent = "×";
+      del.title = "Delete this photo";
+      del.addEventListener("click", () => removePhoto(index));
+      slot.appendChild(img);
+      slot.appendChild(del);
+    }
+    box.appendChild(slot);
+  }
   updateSaveButton();
 }
 
@@ -562,17 +778,17 @@ function clearPhotos() {
 }
 
 function updateSaveButton() {
-  const ready = enrollFrames.length >= 3;
+  const ready = enrollFrames.length >= REQUIRED_PHOTOS;
   el("saveUserBtn").disabled = !ready;
   el("saveUserBtn").textContent = ready ? "Save User" : "Need 3 Photos (" + enrollFrames.length + "/3)";
-  el("clearPhotosBtn").classList.toggle("hidden", enrollFrames.length === 0);
+  el("clearPhotosBtn").disabled = enrollFrames.length === 0;
 }
 
 async function saveUser() {
   const code = el("empCode").value.trim();
   const name = el("empName").value.trim();
   if (!code || !name) { setStatus(el("enrollStatus"), "Enter both Employee ID and Full Name.", "warn"); return; }
-  if (enrollFrames.length < 3) { setStatus(el("enrollStatus"), "Capture 3 photos first.", "warn"); return; }
+  if (enrollFrames.length < REQUIRED_PHOTOS) { setStatus(el("enrollStatus"), "Capture 3 photos first.", "warn"); return; }
 
   el("saveUserBtn").disabled = true;
   setStatus(el("enrollStatus"), "Saving employee…");
@@ -613,11 +829,13 @@ async function loadWorkers() {
         const iso = w.created_at + (String(w.created_at).endsWith("Z") ? "" : "Z");
         added = new Date(iso).toLocaleDateString();
       }
-      tr.innerHTML = "<td>" + w.employee_code + "</td><td>" + w.name + "</td><td>" + added + "</td>";
+      tr.appendChild(cell(w.employee_code));
+      tr.appendChild(cell(w.name));
+      tr.appendChild(cell(added));
       const td = document.createElement("td");
+      td.className = "act";
       const btn = document.createElement("button");
-      btn.className = "danger"; btn.textContent = "Delete";
-      btn.style.padding = "5px 9px"; btn.style.fontSize = "12px";
+      btn.className = "danger mini"; btn.textContent = "Delete";
       btn.addEventListener("click", () => removeWorker(w.employee_code, w.name));
       td.appendChild(btn); tr.appendChild(td);
       body.appendChild(tr);
@@ -626,6 +844,13 @@ async function loadWorkers() {
   } catch (e) {
     setStatus(el("dbStatus"), e.message, "err");
   }
+}
+
+function cell(text, className) {
+  const td = document.createElement("td");
+  td.textContent = text == null ? "—" : String(text);
+  if (className) td.className = className;
+  return td;
 }
 
 async function removeWorker(code, name) {
@@ -644,26 +869,29 @@ async function loadHistory() {
   try {
     const rows = await api("/api/v2/attendance?limit=50");
     const body = el("histBody");
-    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='7'>No attendance records yet.</td></tr>"; return; }
+    if (!rows || !rows.length) { body.innerHTML = "<tr><td colspan='6'>No attendance records yet.</td></tr>"; return; }
     body.innerHTML = "";
     rows.forEach((r) => {
       const iso = r.created_at + (String(r.created_at).endsWith("Z") ? "" : "Z");
-      const when = new Date(iso).toLocaleString();
-      const alc = DEMO_PLACEHOLDER_READINGS ? "0 BAC" : Number(r.alcohol_ppb).toFixed(2);
-      const can = DEMO_PLACEHOLDER_READINGS ? "None" : Number(r.cannabis_ppb).toFixed(2);
-      const ratio = DEMO_PLACEHOLDER_READINGS ? "—" : (Number(r.cannabis_ratio) || 0).toFixed(2);
-      const att = r.attendance_marked;
+      const when = new Date(iso);
       const tr = document.createElement("tr");
-      tr.innerHTML =
-        "<td>" + r.name + "</td><td>" + when + "</td><td>" + alc + "</td><td>" + can +
-        "</td><td>" + ratio +
-        "</td><td><span class='pill " + (att ? "pass'>Yes" : "fail'>No") + "</span></td>";
+      tr.appendChild(cell(r.name));
+      tr.appendChild(cell(when.toLocaleDateString() + " " + when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+      tr.appendChild(cell(fmtBac(r), "num"));
+      tr.appendChild(cell(fmtConfidence(r), "num"));
+
+      const attTd = document.createElement("td");
+      const chip = document.createElement("span");
+      chip.className = "chip" + (r.attendance_marked ? " on" : "");
+      chip.textContent = r.attendance_marked ? "Marked" : "—";
+      attTd.appendChild(chip);
+      tr.appendChild(attTd);
+
       const td = document.createElement("td");
+      td.className = "act";
       const btn = document.createElement("button");
-      btn.className = "danger";
+      btn.className = "danger mini";
       btn.textContent = "Delete";
-      btn.style.padding = "5px 9px";
-      btn.style.fontSize = "12px";
       btn.addEventListener("click", () => removeAttendance(r.id, r.name));
       td.appendChild(btn);
       tr.appendChild(td);
@@ -689,7 +917,7 @@ async function removeAttendance(attendanceId, name) {
 async function loadStats() {
   try {
     const s = await api("/api/v2/status");
-    el("homeStats").textContent = "Registered employees: " + (s.indexed_workers != null ? s.indexed_workers : "—");
+    el("homeStats").textContent = (s.indexed_workers != null ? s.indexed_workers : "—") + " registered";
     showSensorState(s);
   } catch (e) { el("homeStats").textContent = ""; }
 }
@@ -733,9 +961,10 @@ el("saveUserBtn").addEventListener("click", saveUser);
 el("dbRefreshBtn").addEventListener("click", loadWorkers);
 el("histRefreshBtn").addEventListener("click", loadHistory);
 
+renderThumbs();
 showView("home");
 
-// TEMPORARY TESTING: poll the board power monitor. The card stays hidden
+// TEMPORARY TESTING: poll the board power monitor. The bar stays hidden
 // unless the INA745B is present, so boards without it are unaffected.
 (function pollPower() {
   const POLL_MS = 2000;
@@ -799,6 +1028,21 @@ showView("home");
     });
   }
 
+  // The keyboard is an overlay, so the view underneath has to give up exactly
+  // its height -- measured, because the key size is viewport-relative.
+  function showKeyboard() {
+    kb.classList.remove("hidden");
+    document.body.classList.add("osk-open");
+    document.documentElement.style.setProperty("--osk-h", kb.offsetHeight + "px");
+  }
+
+  function hideKeyboard() {
+    kb.classList.add("hidden");
+    document.body.classList.remove("osk-open");
+    document.documentElement.style.setProperty("--osk-h", "0px");
+    active = null;
+  }
+
   function insert(t) {
     if (!active) return;
     let s = null, e = null;
@@ -825,7 +1069,7 @@ showView("home");
     if (k === "abc") { layout = "default"; render(); return; }
     if (k === "backspace") { back(); return; }
     if (k === "space") { insert(" "); return; }
-    if (k === "done") { kb.classList.add("hidden"); active.blur(); active = null; return; }
+    if (k === "done") { const focused = active; hideKeyboard(); focused.blur(); return; }
     insert(k);
     if (layout === "shift") { layout = "default"; render(); }
   }
@@ -833,12 +1077,11 @@ showView("home");
   document.addEventListener("focusin", (e) => {
     if (typeable(e.target)) {
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-      active = e.target; layout = "default"; render(); kb.classList.remove("hidden");
-      setTimeout(() => { try { e.target.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (x) {} }, 60);
+      active = e.target; layout = "default"; render(); showKeyboard();
     }
   });
   document.addEventListener("focusout", () => {
-    hideTimer = setTimeout(() => { if (!typeable(document.activeElement)) { kb.classList.add("hidden"); active = null; } }, 200);
+    hideTimer = setTimeout(() => { if (!typeable(document.activeElement)) hideKeyboard(); }, 200);
   });
 })();
 </script>

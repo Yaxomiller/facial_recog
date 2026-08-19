@@ -85,6 +85,9 @@ class BreathTestResult(BaseModel):
     overall_clear: bool
     attendance_marked: bool
     created_at: datetime
+    # Operator-facing values: %BAC for alcohol, 0-1 confidence for cannabis.
+    alcohol_bac_percent: float = 0.0
+    cannabis_confidence: float = 0.0
     # Cannabis conformity score: upper/lower area split of the exhale curve.
     cannabis_ratio: float = 0.0
     cannabis_upper: float = 0.0
@@ -127,6 +130,10 @@ class AttendanceRow(BaseModel):
     cannabis_clear: bool
     attendance_marked: bool
     created_at: datetime
+    # Operator-facing values, derived the same way as on a live result so the
+    # history table and the scan screen never disagree.
+    alcohol_bac_percent: float = 0.0
+    cannabis_confidence: float = 0.0
     cannabis_ratio: float = 0.0
     cannabis_upper: float = 0.0
     cannabis_lower: float = 0.0

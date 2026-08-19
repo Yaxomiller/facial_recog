@@ -60,7 +60,11 @@ from typing import Any, Callable, Optional
 from src.v2.config import (
     BREATH_ALCOHOL_THRESHOLD_PPB,
     BREATH_ANALYZER_MODE,
+    BREATH_BAC_REF_PERCENT,
+    BREATH_BAC_REF_READING,
+    BREATH_BAC_ZERO_READING,
     BREATH_BASELINE_SECONDS,
+    BREATH_CANNABIS_CONFIDENCE_THRESHOLD,
     BREATH_BOARD_BOOT_SECONDS,
     BREATH_BOARD_ENABLE_GPIO,
     BREATH_BOARD_RESET_SECONDS,
@@ -219,6 +223,29 @@ def area_ratio(samples, threshold_mv: float) -> dict[str, float]:
         "threshold": threshold_mv,
         "points": len(samples),
     }
+
+
+def alcohol_bac_percent(raw_reading: float) -> float:
+    """Convert the raw alcohol integral to %BAC.
+
+    Two calibration points define the line: BREATH_BAC_ZERO_READING reads
+    0.00% and BREATH_BAC_REF_READING reads BREATH_BAC_REF_PERCENT. Readings
+    below the zero point are baseline noise, not negative alcohol, so they
+    clamp to 0 rather than reporting a negative BAC.
+    """
+    span = BREATH_BAC_REF_READING - BREATH_BAC_ZERO_READING
+    if span <= 0:
+        return 0.0
+    bac = (float(raw_reading) - BREATH_BAC_ZERO_READING) * (BREATH_BAC_REF_PERCENT / span)
+    return max(0.0, bac)
+
+
+def cannabis_confidence_score(ratio: float) -> float:
+    """Normalise the upper/lower area ratio into a 0-1 confidence score."""
+    threshold = BREATH_CANNABIS_CONFIDENCE_THRESHOLD
+    if threshold <= 0:
+        return 0.0
+    return max(0.0, min(1.0, float(ratio) / threshold))
 
 
 def build_reading_from_cycle(cycle: CycleResult) -> BreathReading:

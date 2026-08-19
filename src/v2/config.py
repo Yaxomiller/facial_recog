@@ -62,6 +62,20 @@ BREATH_SETTLE_SLOPE_NA_S = float(os.getenv("ATTENDANCE_BREATH_SETTLE_SLOPE_NA_S"
 BREATH_SETTLE_WINDOW_MS = float(os.getenv("ATTENDANCE_BREATH_SETTLE_WINDOW_MS", "10000.0"))
 BREATH_STABILIZE_MAX_S = float(os.getenv("ATTENDANCE_BREATH_STABILIZE_MAX_S", "180.0"))
 
+# --- Display calibration ----------------------------------------------------
+# Alcohol: the raw integral is mapped to %BAC through two calibration points,
+# 30 -> 0.00% and 1500 -> 0.20%, extended linearly. A negative reading is
+# noise around the fresh-air baseline and is clamped to 0.
+BREATH_BAC_ZERO_READING = float(os.getenv("ATTENDANCE_BREATH_BAC_ZERO_READING", "30"))
+BREATH_BAC_REF_READING = float(os.getenv("ATTENDANCE_BREATH_BAC_REF_READING", "1500"))
+BREATH_BAC_REF_PERCENT = float(os.getenv("ATTENDANCE_BREATH_BAC_REF_PERCENT", "0.2"))
+
+# Cannabis: the upper/lower area ratio is reported as a confidence score
+# normalised against this calibration threshold, so it reads 0 to 1.
+BREATH_CANNABIS_CONFIDENCE_THRESHOLD = float(
+    os.getenv("ATTENDANCE_BREATH_CANNABIS_CONFIDENCE_THRESHOLD", "500")
+)
+
 # Mock reading ranges — integrals in mV*s, matching the live measurement.
 BREATH_MOCK_ALCOHOL_MIN = float(os.getenv("ATTENDANCE_BREATH_MOCK_ALCOHOL_MIN", "0"))
 BREATH_MOCK_ALCOHOL_MAX = float(os.getenv("ATTENDANCE_BREATH_MOCK_ALCOHOL_MAX", "30"))
