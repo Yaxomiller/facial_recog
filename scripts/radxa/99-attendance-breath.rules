@@ -1,0 +1,12 @@
+# Breath board access for the attendance kiosk.
+#
+# The kiosk service runs as the desktop user, never root, so that user has to
+# be able to open the STM32 bridge and the GPIO lines itself. Without this the
+# app starts fine and quietly reports SIMULATED readings -- resolve_breath_
+# analyzer() swallows the permission error and returns the mock reader.
+#
+# Installed to /etc/udev/rules.d/ by install-kiosk.sh. Apply by hand with:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
+SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"

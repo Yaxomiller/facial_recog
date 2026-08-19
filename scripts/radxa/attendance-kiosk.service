@@ -26,7 +26,18 @@ Environment=ATTENDANCE_APP_DIR=__APP_DIR__
 # log showed uvicorn's stderr but none of the app's own startup messages.
 Environment=PYTHONUNBUFFERED=1
 
-ExecStart=__APP_DIR__/scripts/radxa/start-kiosk.sh
+# Gives the service a writable /run/attendance-kiosk. start-kiosk.sh drops its
+# "already waited this boot" flag there; Preserve=yes keeps it across restarts
+# so only the first start after a reboot pays the delay, and tmpfs clears it on
+# the next boot. Without this the flag could not be written at all -- /run
+# itself is root-owned and the service runs as the desktop user.
+RuntimeDirectory=attendance-kiosk
+RuntimeDirectoryPreserve=yes
+
+ExecStart=__APP_DIR__/scripts/radxa/start-kiosk.sh --boot-delay
+
+# The 60s boot delay must not count as a startup failure.
+TimeoutStartSec=0
 
 # Keep the screen filled: restart on crash, on a clean exit, and if the
 # operator closes the browser window.

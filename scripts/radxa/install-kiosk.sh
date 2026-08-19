@@ -43,6 +43,22 @@ else
     echo "  settings      : ${ENV_PATH} (created)"
 fi
 
+# Breath board access. The service runs as the desktop user, so that user must
+# be able to open /dev/spidev* and /dev/gpiochip* -- otherwise the app starts
+# looking perfectly healthy and quietly reports SIMULATED readings, because
+# resolve_breath_analyzer() treats a permission error as "board unavailable".
+# The udev rule fixes nodes created from now on; the group membership is what
+# lets the service use them.
+RULES_PATH="/etc/udev/rules.d/99-attendance-breath.rules"
+install -m 0644 "${SCRIPT_DIR}/99-attendance-breath.rules" "$RULES_PATH"
+for group_name in spi gpio; do
+    getent group "$group_name" >/dev/null 2>&1 || groupadd --system "$group_name"
+    usermod -aG "$group_name" "$TARGET_USER"
+done
+udevadm control --reload-rules >/dev/null 2>&1 || true
+udevadm trigger --subsystem-match=spidev --subsystem-match=gpio >/dev/null 2>&1 || true
+echo "  breath board  : ${TARGET_USER} added to spi,gpio; udev rule installed"
+
 sed -e "s|__APP_DIR__|${APP_DIR}|g" \
     -e "s|__USER__|${TARGET_USER}|g" \
     "${SCRIPT_DIR}/${SERVICE_NAME}.service" > "$UNIT_PATH"
@@ -50,6 +66,13 @@ chmod 0644 "$UNIT_PATH"
 
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}.service"
+
+# The boot delay exists for cold boots, not for this install. Pre-create the
+# once-per-boot flag so the restart below comes up straight away instead of
+# leaving the installer sitting there for a minute.
+install -d -m 0755 -o "$TARGET_USER" /run/${SERVICE_NAME}
+install -m 0644 -o "$TARGET_USER" /dev/null "/run/${SERVICE_NAME}/booted"
+
 systemctl restart "${SERVICE_NAME}.service"
 
 echo

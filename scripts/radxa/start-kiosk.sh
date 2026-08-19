@@ -14,11 +14,41 @@ export DISPLAY
 
 log() { echo "[kiosk] $*"; }
 
+# --- boot delay --------------------------------------------------------------
+# systemd reaches graphical.target well before the board has actually settled
+# (X, the camera ISP and the sensor rail are all still coming up), and starting
+# straight into the app there is unreliable. Wait ONCE per boot: the flag lives
+# in the service's RuntimeDirectory, which is tmpfs and therefore gone after a
+# reboot, so a later `systemctl restart` comes up immediately.
+# Only the service passes --boot-delay; running this script by hand never waits.
+if [ "${1:-}" = "--boot-delay" ]; then
+    shift
+    boot_flag="${RUNTIME_DIRECTORY:-/run/attendance-kiosk}/booted"
+    if ! mkdir -p "$(dirname "$boot_flag")" 2>/dev/null; then
+        # No writable runtime dir (manual run as a user without one). Fall back
+        # rather than failing -- the delay is a nicety, not a requirement.
+        boot_flag="/tmp/attendance-kiosk-booted-$(id -u)"
+    fi
+    if [ -e "$boot_flag" ]; then
+        log "already started once this boot; starting without delay"
+    else
+        delay="${ATTENDANCE_BOOT_DELAY_SECONDS:-60}"
+        log "boot delay: waiting ${delay}s for the board to settle"
+        sleep "$delay"
+        touch "$boot_flag" 2>/dev/null || true
+    fi
+fi
+
 # --- wait for the X server ---------------------------------------------------
 # systemd can start us before the display manager has finished bringing X up.
 # Without this the browser fails instantly with "cannot open display".
 if [ -z "${XAUTHORITY:-}" ]; then
-    for candidate in "$HOME/.Xauthority" "/home/${SUDO_USER:-$USER}/.Xauthority"; do
+    # `id -un` rather than $USER: systemd sets USER for User= units, but a
+    # plain `sudo`, a cron job or a non-login shell does not -- and with
+    # `set -u` above, reading it unset aborts the whole script right here,
+    # before the app is ever launched.
+    session_user="${SUDO_USER:-${USER:-$(id -un)}}"
+    for candidate in "${HOME:-/home/$session_user}/.Xauthority" "/home/$session_user/.Xauthority"; do
         if [ -f "$candidate" ]; then
             export XAUTHORITY="$candidate"
             break

@@ -66,6 +66,29 @@ check_node() {
 check_node "$ATTENDANCE_BREATH_SPI_DEVICE" "STM32 SPI bridge" spi
 check_node "$ATTENDANCE_BREATH_GPIO_CHIP" "board enable / doorbell / pump" gpio
 
+# A second instance is the worst failure here, because it looks like success:
+# uvicorn only reports the bind error after a long startup, the browser opens
+# against the app that IS running, and the confirmation below would describe
+# that one rather than this run. Catch it before anything is launched.
+if ! "$PYTHON" - "$WEB_PORT" <<'PY' >/dev/null 2>&1
+import socket, sys
+sock = socket.socket()
+try:
+    sock.bind(("0.0.0.0", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+then
+    warn "IN USE:  port $WEB_PORT is already served by another instance."
+    warn "         fix: sudo systemctl stop attendance-kiosk"
+    warn "         (or set ATTENDANCE_WEB_PORT to run alongside it)"
+    problems=$((problems + 1))
+else
+    log "ok: port $WEB_PORT is free"
+fi
+
 if [ "$problems" -gt 0 ]; then
     if [ "${ATTENDANCE_SPI_ALLOW_FALLBACK:-0}" = "1" ]; then
         warn "starting anyway (ATTENDANCE_SPI_ALLOW_FALLBACK=1) -- readings will be SIMULATED"
@@ -78,19 +101,96 @@ if [ "$problems" -gt 0 ]; then
     fi
 fi
 
-# Over SSH there is no X display, so opening a browser window just fails.
-if [ -z "${DISPLAY:-}" ]; then
+# --- where the window goes ---------------------------------------------------
+# Over SSH, DISPLAY is unset. Refusing to open a window at all is wrong here:
+# the usual intent is "put it on the device's own screen", and the desktop
+# session is normally sitting right there on :0. So adopt that session if it
+# exists, the way start-kiosk.sh does, and only go headless when there really
+# is no X server. ATTENDANCE_HEADLESS=1 forces headless regardless.
+if [ -z "${DISPLAY:-}" ] && [ "${ATTENDANCE_HEADLESS:-0}" != "1" ] && [ -e /tmp/.X11-unix/X0 ]; then
+    export DISPLAY=:0
+    log "no DISPLAY set; using the device's own session (:0)"
+fi
+
+if [ -n "${DISPLAY:-}" ] && [ -z "${XAUTHORITY:-}" ]; then
+    # Without the session's auth cookie the browser dies with "cannot open
+    # display" even though DISPLAY is correct.
+    # `id -un` rather than $USER: under systemd or any non-login shell USER is
+    # unset, and with `set -u` reading it would abort the script right here.
+    session_user="${SUDO_USER:-${USER:-$(id -un)}}"
+    for candidate in "${HOME:-/home/$session_user}/.Xauthority" "/home/$session_user/.Xauthority"; do
+        if [ -f "$candidate" ]; then
+            export XAUTHORITY="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "${DISPLAY:-}" ] || [ "${ATTENDANCE_HEADLESS:-0}" = "1" ]; then
     export ATTENDANCE_OPEN_BROWSER_ON_START=false
-    log "no DISPLAY; not opening a window -- browse to http://<device-ip>:${WEB_PORT}/demo"
+    unset DISPLAY 2>/dev/null || true
+    log "headless: no window -- browse to http://<device-ip>:${WEB_PORT}/demo"
+elif ! xset q >/dev/null 2>&1; then
+    warn "WARNING: DISPLAY=$DISPLAY is set but no X server answered; the window may not appear."
+fi
+
+# Chromium dies with SIGILL on the Cubie A5e -- setup-new-device.sh installs
+# Firefox precisely because of that. But _browser_app_command tries chromium
+# BEFORE firefox, so a board with both installed still picks the one that
+# crashes, and the app only ever prints "Opening /usr/bin/chromium". Choose
+# Firefox up front; ATTENDANCE_APP_BROWSER still overrides.
+if [ -z "${ATTENDANCE_APP_BROWSER:-}" ] && [ "${ATTENDANCE_OPEN_BROWSER_ON_START:-true}" != "false" ]; then
+    for firefox in firefox firefox-esr; do
+        if command -v "$firefox" >/dev/null 2>&1; then
+            export ATTENDANCE_APP_BROWSER="$firefox"
+            log "window browser: $firefox (Chromium SIGILLs on this board)"
+            break
+        fi
+    done
+    if [ -z "${ATTENDANCE_APP_BROWSER:-}" ]; then
+        warn "WARNING: Firefox is not installed, so the app will fall back to"
+        warn "         Chromium -- which crashes with SIGILL on this board."
+        warn "         fix: sudo apt-get install -y firefox-esr"
+    fi
+fi
+
+# How to open that browser by hand, for the messages below.
+case "${ATTENDANCE_APP_BROWSER:-}" in
+    *firefox*) window_cmd="${ATTENDANCE_APP_BROWSER} --kiosk http://127.0.0.1:${WEB_PORT}/demo" ;;
+    *)         window_cmd="chromium --app=http://127.0.0.1:${WEB_PORT}/demo" ;;
+esac
+
+# No browser will open the desktop user's session from root: Chromium refuses
+# to run as root at all, and Firefox refuses when $XAUTHORITY belongs to
+# someone else. The app opens the browser fire-and-forget, so it would print
+# "Opening /usr/bin/firefox" and no window would ever appear. Don't even try --
+# say what happened and how to get the window, which is a one-liner from the
+# desktop session against the server this run is about to start.
+if [ "$(id -u)" -eq 0 ] && [ "${ATTENDANCE_OPEN_BROWSER_ON_START:-true}" != "false" ]; then
+    export ATTENDANCE_OPEN_BROWSER_ON_START=false
+    warn "NOTE: running as root, so no window will be opened from here --"
+    warn "      Chromium will not run as root, and Firefox refuses a session"
+    warn "      owned by another user. The app itself is unaffected."
+    warn "      Once it is up, from the DESKTOP user's session run:"
+    warn "        DISPLAY=:0 $window_cmd"
+    warn "      Root also leaves files in data/ that the attendance-kiosk"
+    warn "      service (running as the desktop user) cannot then write:"
+    warn "        sudo chown -R \$(logname):\$(logname) '$APP_DIR'"
+    warn "      Running without sudo avoids all of this -- see 'usermod -aG'."
 fi
 
 # --- confirm what actually loaded --------------------------------------------
 # The preflight proves the board COULD be opened, not that it WAS. Ask the
 # running app which analyzer it ended up with and say so plainly. Backgrounded
 # before the exec below, so it outlives this shell and lands in the same log.
+# `exec` below keeps this PID, so $$ becomes the app itself: polling only while
+# it is alive stops a dead run from being tailed for another minute (which also
+# held a `| tee` pipe open long after the app had gone).
+self_pid=$$
 (
     for _ in $(seq 1 30); do
         sleep 2
+        kill -0 "$self_pid" 2>/dev/null || exit 0
         status="$(curl -s --max-time 3 "http://127.0.0.1:${WEB_PORT}/api/v2/status" 2>/dev/null)" || continue
         case "$status" in
             *'"active_breath_analyzer":"spi"'*)
