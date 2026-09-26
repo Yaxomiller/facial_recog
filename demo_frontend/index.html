@@ -1122,9 +1122,6 @@ showView("home");
         const b = document.createElement("button");
         b.type = "button"; b.className = "osk-key"; b.dataset.k = k;
         b.textContent = LB[k] || k;
-        b.addEventListener("pointerdown", (ev) => ev.preventDefault());
-        b.addEventListener("mousedown", (ev) => ev.preventDefault());
-        b.addEventListener("click", () => press(k));
         r.appendChild(b);
       });
       kb.appendChild(r);
@@ -1177,10 +1174,33 @@ showView("home");
     if (layout === "shift") { layout = "default"; render(); }
   }
 
+  // One delegated listener on the panel, not one per key. Switching layout
+  // replaces every button, and a per-key handler then belongs to a button that
+  // no longer exists; the panel itself is never destroyed.
+  //
+  // pointerdown rather than click: on a touchscreen `click` is delivered to the
+  // common ancestor of where the finger went down and came up, so a tap that
+  // slides a couple of pixels between two keys arrives at the ROW instead of a
+  // key -- and if the layout was rebuilt in between, at whatever now sits in
+  // that spot. pointerdown targets exactly what was under the finger.
+  kb.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();           // never pull focus off the field being typed into
+    const key = ev.target.closest(".osk-key");
+    if (key) press(key.dataset.k);
+  });
+  kb.addEventListener("mousedown", (ev) => ev.preventDefault());
+  kb.addEventListener("click", (ev) => ev.preventDefault());
+
   document.addEventListener("focusin", (e) => {
     if (typeable(e.target)) {
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-      active = e.target; layout = "default"; render(); showKeyboard();
+      // Only reset the layout when the field actually changes. Focus can bounce
+      // back to the same input mid-word on a touchscreen, and resetting here
+      // snapped the keyboard out of shift or symbols without the key legends
+      // being looked at again -- so the next tap produced whatever character
+      // the default layout happened to have at that position.
+      if (active !== e.target) { active = e.target; layout = "default"; render(); }
+      showKeyboard();
     }
   });
   document.addEventListener("focusout", () => {
